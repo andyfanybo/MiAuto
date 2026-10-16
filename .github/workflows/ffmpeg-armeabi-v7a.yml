@@ -159,7 +159,16 @@ jobs:
 
             # -L: the unversioned name FFmpeg leaves behind is a symlink to the
             # versioned file, and file(1) reports "symbolic link to ..." otherwise.
+            # Strip first: make(1) leaves debug information in place and it is
+            # roughly two thirds of the file, while the checked-in arm64 libraries
+            # are stripped.
+            TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
+            "$TC/bin/llvm-strip" --strip-unneeded "$so"
             file -L "$so"
+            if file -L "$so" | grep -q 'not stripped'; then
+              echo "::error::$lib still carries debug information"
+              exit 1
+            fi
             file -L "$so" | grep -q 'ELF 32-bit LSB shared object, ARM' \
               || { echo "::error::$lib is not a 32-bit ARM shared object"; exit 1; }
 
