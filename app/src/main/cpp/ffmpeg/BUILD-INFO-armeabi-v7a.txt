@@ -1,0 +1,33 @@
+NDK r27c, API 21
+FFmpeg 7.1.1 from https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz
+configure:
+--target-os=android
+--arch=arm
+--cpu=armv7-a
+--enable-cross-compile
+--cc=/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang
+--cxx=/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang++
+--ar=/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
+--nm=/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm
+--ranlib=/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib
+--strip=/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip
+--sysroot=/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/sysroot
+--disable-everything
+--disable-programs
+--disable-doc
+--disable-avdevice
+--disable-avfilter
+--disable-avformat
+--disable-encoders
+--disable-muxers
+--disable-demuxers
+--disable-swresample
+--enable-decoder=hevc
+--enable-parser=hevc
+--enable-protocol=file
+--enable-swscale
+--enable-neon
+--enable-pic
+--enable-shared
+--disable-static
+--extra-ldflags=-Wl,-z,max-page-size=16384
