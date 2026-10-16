@@ -142,21 +142,20 @@ jobs:
 
           mkdir -p out/armeabi-v7a
           for lib in libavcodec.so libavutil.so libswscale.so; do
-            # --target-os=android in FFmpeg's configure sets
-            # SHFLAGS='-shared -Wl,-soname,$(SLIBNAME)' -- an unversioned SONAME --
-            # but the file itself is built as $(SLIBNAME).$(LIBMAJOR). So take
-            # whichever exists and install it under the unversioned name that
+            # FFmpeg builds each library inside its own subdirectory
+            # (libavcodec/libavcodec.so.61), not at the top of the tree, and
+            # --target-os=android sets SHFLAGS='-shared -Wl,-soname,$(SLIBNAME)',
+            # so the SONAME is unversioned while the file carries a major version.
+            # Take whatever exists and install it under the unversioned name that
             # Android's System.loadLibrary looks for.
-            so="$SRC/$lib"
-            if [ ! -e "$so" ]; then
-              # An unmatched glob stays literal here, so test each candidate rather
-              # than trusting the pattern to expand.
-              for cand in "$SRC/$lib".[0-9]*; do
-                if [ -e "$cand" ]; then so="$cand"; break; fi
-              done
+            so=$(find "$SRC" -maxdepth 2 \( -name "$lib" -o -name "$lib.*" \) 2>/dev/null | sort | head -n 1)
+            if [ -z "$so" ]; then
+              echo "::error::$lib was not produced"
+              echo "--- libraries actually present in $SRC ---"
+              find "$SRC" -maxdepth 2 -name '*.so*' | sort | head -n 20
+              exit 1
             fi
-            [ -e "$so" ] || { echo "::error::$lib was not produced"; exit 1; }
-            echo "--- $lib (built as $(basename "$so")) ---"
+            echo "--- $lib (built as ${so#"$SRC"/}) ---"
 
             file "$so"
             file "$so" | grep -q 'ELF 32-bit LSB shared object, ARM' \
