@@ -1,0 +1,175 @@
+name: FFmpeg armeabi-v7a libs
+
+# Builds the three FFmpeg shared libraries the bundled HEVC decoder links against
+# (libavcodec / libavutil / libswscale) for 32-bit ARM.
+#
+# Upstream checks in only the arm64-v8a build, so armeabi-v7a compiles
+# hur_soft_hevc with HUR_HAVE_FFMPEG=0 and the bundled decoder reports unavailable
+# -- see app/src/main/cpp/ffmpeg/README.md. This workflow produces the missing
+# three for a 32-bit head unit.
+#
+# Manual only, and it uploads an artifact rather than committing anything: check
+# the verification output and the checksums, then decide whether to commit them.
+# Nothing here is Actions-specific apart from the runner -- the same commands work
+# on any machine with an NDK.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ffmpeg_version:
+        description: FFmpeg release tarball to build
+        required: true
+        default: "7.1.1"
+      ndk_version:
+        description: Android NDK release, matching the zip name on dl.google.com
+        required: true
+        default: "r27c"
+      api_level:
+        description: Android API level for the NDK clang wrappers
+        required: true
+        default: "21"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build for armeabi-v7a
+    runs-on: ubuntu-latest
+    env:
+      FFMPEG_VERSION: ${{ inputs.ffmpeg_version }}
+      NDK_VERSION: ${{ inputs.ndk_version }}
+      API_LEVEL: ${{ inputs.api_level }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Download NDK ${{ inputs.ndk_version }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/ndk.zip \
+            "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip"
+          unzip -q /tmp/ndk.zip -d /opt
+          NDK="/opt/android-ndk-${NDK_VERSION}"
+          CC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi${API_LEVEL}-clang"
+          test -x "$CC" || { echo "no clang wrapper at $CC" >&2; exit 1; }
+          echo "NDK=$NDK" >> "$GITHUB_ENV"
+          printf 'NDK %s, API %s\nFFmpeg %s from https://ffmpeg.org/releases/ffmpeg-%s.tar.xz\n' \
+            "$NDK_VERSION" "$API_LEVEL" "$FFMPEG_VERSION" "$FFMPEG_VERSION" > /tmp/build-info.txt
+
+      - name: Download FFmpeg ${{ inputs.ffmpeg_version }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/ffmpeg.tar.xz \
+            "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
+          tar -xf /tmp/ffmpeg.tar.xz -C /tmp
+          SRC="/tmp/ffmpeg-${FFMPEG_VERSION}"
+          test -f "$SRC/configure"
+          echo "SRC=$SRC" >> "$GITHUB_ENV"
+
+      # The shape is the one documented in app/src/main/cpp/ffmpeg/README.md, so the
+      # 32-bit libraries come out the same way as the checked-in arm64 ones:
+      # hevc decoder + swscale only, shared, PIC, 16 KB maximum page size.
+      #
+      # --enable-neon is explicit because --cpu=armv7-a does not by itself promise
+      # the NEON paths, and software HEVC without SIMD is not worth building. Every
+      # ARMv7 SoC in a head unit has NEON.
+      #
+      # Not --enable-gpl, not --enable-version3, not --enable-nonfree: the result
+      # stays LGPL v2.1+, matching the arm64 build and this repository's AGPL-3.0.
+      - name: Configure
+        run: |
+          set -euo pipefail
+          TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
+          ARGS=(
+            --target-os=android
+            --arch=arm
+            --cpu=armv7-a
+            --enable-cross-compile
+            "--cc=$TC/bin/armv7a-linux-androideabi${API_LEVEL}-clang"
+            "--cxx=$TC/bin/armv7a-linux-androideabi${API_LEVEL}-clang++"
+            "--ar=$TC/bin/llvm-ar"
+            "--nm=$TC/bin/llvm-nm"
+            "--ranlib=$TC/bin/llvm-ranlib"
+            "--strip=$TC/bin/llvm-strip"
+            "--sysroot=$TC/sysroot"
+            --disable-everything
+            --disable-programs
+            --disable-doc
+            --disable-avdevice
+            --disable-avfilter
+            --disable-avformat
+            --disable-encoders
+            --disable-muxers
+            --disable-demuxers
+            --enable-decoder=hevc
+            --enable-parser=hevc
+            --enable-protocol=file
+            --enable-swscale
+            --enable-neon
+            --enable-pic
+            --enable-shared
+            --disable-static
+            --extra-ldflags=-Wl,-z,max-page-size=16384
+          )
+          printf '%s\n' "${ARGS[@]}" > /tmp/configure-args.txt
+          ( cd "$SRC" && ./configure "${ARGS[@]}" ) 2>&1 | tee /tmp/configure.log
+          grep -qi 'LGPL version 2.1 or later' /tmp/configure.log \
+            || { echo "::error::configure did not report the expected LGPL v2.1+ licence"; exit 1; }
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          if ! make -C "$SRC" -j"$(nproc)" > /tmp/build.log 2>&1; then
+            echo "--- build failed, last 60 lines ---" >&2
+            tail -n 60 /tmp/build.log >&2
+            exit 1
+          fi
+          tail -n 5 /tmp/build.log
+
+      # The component macro is the authoritative check that the decoder is in the
+      # library -- a string grep would pass on a build that merely mentions hevc.
+      - name: Verify
+        run: |
+          set -euo pipefail
+          grep -rhqE '^#define CONFIG_HEVC_DECODER 1' "$SRC/config.h" "$SRC/config_components.h" 2>/dev/null \
+            || { echo "::error::CONFIG_HEVC_DECODER is not enabled in this build"; exit 1; }
+
+          mkdir -p out/armeabi-v7a
+          for lib in libavcodec.so libavutil.so libswscale.so; do
+            so="$SRC/$lib"
+            [ -f "$so" ] || { echo "::error::$lib was not produced"; exit 1; }
+
+            echo "--- $lib ---"
+            file "$so"
+            file "$so" | grep -q 'ELF 32-bit LSB shared object, ARM' \
+              || { echo "::error::$lib is not a 32-bit ARM shared object"; exit 1; }
+
+            soname=$(readelf -dW "$so" | awk '/SONAME/ {gsub(/[][]/,""); print $NF}')
+            echo "SONAME=$soname"
+            echo "NEEDED=$(readelf -dW "$so" | awk '/NEEDED/ {gsub(/[][]/,""); printf "%s ", $NF}')"
+            # Android needs the unversioned name: the JNI wrapper links -lavcodec etc.
+            [ "$soname" = "$lib" ] \
+              || { echo "::error::$lib SONAME is '$soname', expected unversioned '$lib'"; exit 1; }
+
+            # Normalise case and leading zeros before comparing: readelf is free to
+            # print 0x4000, 0x00004000 or 0x4000 depending on version and class.
+            aligns=$(readelf -lW "$so" | awk '$1=="LOAD" {print tolower($NF)}' | sed 's/^0x0*/0x/' | sort -u | tr '\n' ' ')
+            echo "PT_LOAD align=$aligns"
+            [ "$aligns" = "0x4000 " ] \
+              || { echo "::error::$lib is not 16 KB aligned (got: $aligns)"; exit 1; }
+
+            cp "$so" out/armeabi-v7a/
+          done
+
+          ( cd out && sha256sum armeabi-v7a/*.so | tee armeabi-v7a/SHA256SUMS )
+          cp /tmp/build-info.txt out/armeabi-v7a/BUILD-INFO.txt
+          { echo "configure:"; cat /tmp/configure-args.txt; } >> out/armeabi-v7a/BUILD-INFO.txt
+          du -h out/armeabi-v7a/*.so
+
+      - name: Upload the libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-armeabi-v7a-${{ inputs.ffmpeg_version }}-ndk${{ inputs.ndk_version }}
+          path: out/
+          if-no-files-found: error
