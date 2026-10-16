@@ -102,6 +102,7 @@ jobs:
             --disable-encoders
             --disable-muxers
             --disable-demuxers
+            --disable-swresample
             --enable-decoder=hevc
             --enable-parser=hevc
             --enable-protocol=file
@@ -135,22 +136,47 @@ jobs:
           grep -rhqE '^#define CONFIG_HEVC_DECODER 1' "$SRC/config.h" "$SRC/config_components.h" 2>/dev/null \
             || { echo "::error::CONFIG_HEVC_DECODER is not enabled in this build"; exit 1; }
 
+          # What we ship, plus what the Android system itself provides. Anything else
+          # in DT_NEEDED would be an unresolvable dependency once installed.
+          allowed="libavutil.so libc.so libm.so libdl.so liblog.so libz.so libandroid.so"
+
           mkdir -p out/armeabi-v7a
           for lib in libavcodec.so libavutil.so libswscale.so; do
+            # --target-os=android in FFmpeg's configure sets
+            # SHFLAGS='-shared -Wl,-soname,$(SLIBNAME)' -- an unversioned SONAME --
+            # but the file itself is built as $(SLIBNAME).$(LIBMAJOR). So take
+            # whichever exists and install it under the unversioned name that
+            # Android's System.loadLibrary looks for.
             so="$SRC/$lib"
-            [ -f "$so" ] || { echo "::error::$lib was not produced"; exit 1; }
+            if [ ! -e "$so" ]; then
+              # An unmatched glob stays literal here, so test each candidate rather
+              # than trusting the pattern to expand.
+              for cand in "$SRC/$lib".[0-9]*; do
+                if [ -e "$cand" ]; then so="$cand"; break; fi
+              done
+            fi
+            [ -e "$so" ] || { echo "::error::$lib was not produced"; exit 1; }
+            echo "--- $lib (built as $(basename "$so")) ---"
 
-            echo "--- $lib ---"
             file "$so"
             file "$so" | grep -q 'ELF 32-bit LSB shared object, ARM' \
               || { echo "::error::$lib is not a 32-bit ARM shared object"; exit 1; }
 
             soname=$(readelf -dW "$so" | awk '/SONAME/ {gsub(/[][]/,""); print $NF}')
+            needed=$(readelf -dW "$so" | awk '/NEEDED/ {gsub(/[][]/,""); printf "%s ", $NF}')
             echo "SONAME=$soname"
-            echo "NEEDED=$(readelf -dW "$so" | awk '/NEEDED/ {gsub(/[][]/,""); printf "%s ", $NF}')"
-            # Android needs the unversioned name: the JNI wrapper links -lavcodec etc.
+            echo "NEEDED=$needed"
+            # Android links by SONAME, so an unversioned one is mandatory: the JNI
+            # wrapper links -lavcodec and the loader would not find libavcodec.so.61.
             [ "$soname" = "$lib" ] \
               || { echo "::error::$lib SONAME is '$soname', expected unversioned '$lib'"; exit 1; }
+
+            for dep in $needed; do
+              case " $allowed " in
+                *" $dep "*) ;;
+                *) echo "::error::$lib needs $dep, which is neither shipped nor an Android system library"; exit 1 ;;
+              esac
+            done
 
             # Normalise case and leading zeros before comparing: readelf is free to
             # print 0x4000, 0x00004000 or 0x4000 depending on version and class.
@@ -159,7 +185,7 @@ jobs:
             [ "$aligns" = "0x4000 " ] \
               || { echo "::error::$lib is not 16 KB aligned (got: $aligns)"; exit 1; }
 
-            cp "$so" out/armeabi-v7a/
+            cp "$so" "out/armeabi-v7a/$lib"
           done
 
           ( cd out && sha256sum armeabi-v7a/*.so | tee armeabi-v7a/SHA256SUMS )
