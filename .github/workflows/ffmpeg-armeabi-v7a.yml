@@ -157,8 +157,10 @@ jobs:
             fi
             echo "--- $lib (built as ${so#"$SRC"/}) ---"
 
-            file "$so"
-            file "$so" | grep -q 'ELF 32-bit LSB shared object, ARM' \
+            # -L: the unversioned name FFmpeg leaves behind is a symlink to the
+            # versioned file, and file(1) reports "symbolic link to ..." otherwise.
+            file -L "$so"
+            file -L "$so" | grep -q 'ELF 32-bit LSB shared object, ARM' \
               || { echo "::error::$lib is not a 32-bit ARM shared object"; exit 1; }
 
             soname=$(readelf -dW "$so" | awk '/SONAME/ {gsub(/[][]/,""); print $NF}')
