@@ -81,3 +81,23 @@ MiAuto 只把 `AapService` 当前台保活，并用 `BuildConfig.ICCOA_ONLY = tr
 顺带修掉一个隐患：`tryStartCast()` 原先在无 Surface（待机页）时会**每 500 ms 无限自我重试**，
 待机页常驻即等于永不停止的定时器。现已加 `CAST_RETRY_MAX = 20`（≈10 秒）预算，
 Surface 稍后就绪的情形由 `setSurface()` 兜底触发。
+
+## 6. 32 位设备启动崩溃：`libusbio.so`
+
+ICCOA 的 `ShareLinkService.onBind()` 会启动 AOA USB 管理器，**无线模式也会走这条路径**。
+`com.ucar.connect.aoa.UsbNative` 在静态初始化时无条件 `System.loadLibrary("usbio")`。
+已分发的 0.1.1 APK 仅在 `arm64-v8a` 下带此库；32 位 Android 9 设备的实测崩溃为
+`UnsatisfiedLinkError: couldn't find "libusbio.so"`。应用自身的 `usbhelper` 是另一套 JNI
+接口，无法通过改名来替代它。
+
+CMake 现在对缺少厂商预编译库的 ABI 构建 `usbio_compat.c`，提供 SDK 实际使用的
+`nativeBulkRead` / `nativeBulkWrite`，签名均为 `(II[BIIJ)I`。实现通过 Android USB
+连接已经打开的 fd 执行 `USBDEVFS_BULK`，保留数组偏移、短读和负 errno 返回值；不关闭
+由 SDK 拥有的 fd，也不在阻塞传输期间固定 Java 数组。已有的 arm64 厂商库保持原样。
+
+验证：`bash scripts/test_usbio.sh` 在 Linux JVM 上测试真实 JNI 绑定、数组边界、偏移、
+短读和驱动错误；`python3 scripts/check_apk_native_libs.py <APK>` 检查每个打包 ABI 都含
+正确架构的 `libusbio.so`。两项检查均已接入 Android CI。
+
+这项修复解决 USB 库加载导致的闪退。其他 ABI 的 `libovmsink.so`（Miracast）和软件
+HEVC 支持仍取决于实际提供的库；它也不会改变 ICCOA 的系统权限要求。

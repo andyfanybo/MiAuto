@@ -77,3 +77,11 @@ target_link_libraries(hur_soft_hevc PRIVATE ${log-lib} ${android-lib})
 # Ordinary-UID, read-only legacy AP frequency query.
 add_library(local_hotspot_radio SHARED local_hotspot_radio.c)
 target_compile_options(local_hotspot_radio PRIVATE -Wall -Wextra -Werror)
+
+# ICCOA's ShareLinkService initialises USB even for wireless sessions. Its
+# UsbNative class unconditionally loads usbio, whose vendor binary is arm64-only.
+# Supply the SDK's two JNI methods on every ABI without a vendor implementation.
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${ANDROID_ABI}/libusbio.so")
+    add_library(usbio SHARED usbio_compat.c)
+    target_compile_options(usbio PRIVATE -Wall -Wextra -Werror)
+endif()
