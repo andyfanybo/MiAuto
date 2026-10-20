@@ -11,6 +11,20 @@ import java.util.HashSet;
 import java.util.Set;
 
 public final class HotspotNetworkInfo {
+    /**
+     * Android 9's MT8167 MtkSoftApManager forces STA+SAP onto the connected
+     * station's channel. Its LOHS reservation still reports the original auto
+     * configuration, so use the public station frequency on this verified path.
+     * Other platforms must retain "unknown" rather than advertise a guessed band.
+     */
+    static int coexistFrequency(String hardware, int api, int networkId, int frequency) {
+        if (api != 28 || !"mt8167".equalsIgnoreCase(hardware) || networkId < 0) return 0;
+        if (frequency >= 2412 && frequency <= 2472 && (frequency - 2412) % 5 == 0) return frequency;
+        if (frequency == 2484) return frequency;
+        if (frequency >= 5180 && frequency <= 5825 && frequency % 5 == 0) return frequency;
+        return 0;
+    }
+
     public final String address;
     public final String mac;
     private HotspotNetworkInfo(String address, String mac) { this.address = address; this.mac = mac; }
