@@ -1080,4 +1080,12 @@
     <string name="cluster_map_trigger_always">Always</string>
     <string name="cluster_map_trigger_cruise">Cruise + nav</string>
     <string name="cluster_map_trigger_navigation">Nav only</string>
+    <string name="carlink_transport_title">CarWith connection</string>
+    <string name="carlink_transport_auto">Automatic</string>
+    <string name="carlink_transport_p2p">Wi-Fi Direct</string>
+    <string name="carlink_transport_hotspot">Local hotspot (backup)</string>
+    <string name="carlink_transport_restart_hint">Reopen MiAuto after switching</string>
+    <string name="carlink_transport_apply_exit">Save and exit</string>
+    <string name="carlink_transport_not_supported">Local hotspot mode requires Android 9 or later.</string>
+    <string name="carlink_transport_save_first">Save or discard other pending settings before changing the connection method.</string>
 </resources>

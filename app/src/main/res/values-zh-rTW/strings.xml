@@ -1029,4 +1029,12 @@
     <string name="cluster_map_trigger_always">常開</string>
     <string name="cluster_map_trigger_cruise">巡航與導航</string>
     <string name="cluster_map_trigger_navigation">僅導航</string>
+    <string name="carlink_transport_title">CarWith 連線方式</string>
+    <string name="carlink_transport_auto">自動</string>
+    <string name="carlink_transport_p2p">Wi-Fi 直連</string>
+    <string name="carlink_transport_hotspot">本機熱點（備用）</string>
+    <string name="carlink_transport_restart_hint">切換後需重新開啟 MiAuto</string>
+    <string name="carlink_transport_apply_exit">儲存並離開</string>
+    <string name="carlink_transport_not_supported">本機熱點模式需要 Android 9 或更新版本。</string>
+    <string name="carlink_transport_save_first">請先儲存或取消其他尚未儲存的設定，再切換連線方式。</string>
 </resources>

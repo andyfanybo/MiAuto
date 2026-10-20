@@ -438,8 +438,10 @@ public class IccoaManager {
                 .setSupportAppWindowCast(false)
                 .build();
 
-        boolean softAp = IccoaConnectionPolicy.enableSoftAp(android.os.Build.VERSION.SDK_INT);
-        log("wireless transports: P2P=true SoftAP=" + softAp +
+        String transport = CarLinkTransport.get(appCtx);
+        boolean p2p = CarLinkTransport.supportsP2p(transport);
+        boolean softAp = CarLinkTransport.supportsAp(transport, android.os.Build.VERSION.SDK_INT);
+        log("wireless transports: mode=" + transport + " P2P=" + p2p + " SoftAP=" + softAp +
                 " api=" + android.os.Build.VERSION.SDK_INT);
         return new UCarConfig.Builder()
                 .setCarBrMac(carId)                  // 必须恰好 6 字节
@@ -450,7 +452,7 @@ public class IccoaManager {
                 .setScreenHeight(sh)
                 .setVideoDisplayWidth(vw)
                 .setVideoDisplayHeight(vh)
-                .setSupportP2P(true)
+                .setSupportP2P(p2p)
                 .setSupportSoftAP(softAp)
                 .setSupportCamera(false)
                 .setSupportHevc(false)

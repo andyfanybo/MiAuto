@@ -1030,4 +1030,12 @@
     <string name="wifi_direct_requires_wifi">Android Auto nativo necesita Wi-Fi. Actívala, por favor.</string>
     <string name="wifi_direct_retry_5ghz">El Wi-Fi Direct nativo de Android Auto se inició en %1$s. Reintentando 5 GHz…</string>
     <string name="wifi_direct_unfriendly_channel">Wi-Fi Direct está en %1$s, al que la mayoría de los teléfonos no puede unirse. Reinicia la Wi-Fi e inténtalo de nuevo.</string>
+    <string name="carlink_transport_title">Conexión CarWith</string>
+    <string name="carlink_transport_auto">Automática</string>
+    <string name="carlink_transport_p2p">Wi-Fi Direct</string>
+    <string name="carlink_transport_hotspot">Punto de acceso local (alternativa)</string>
+    <string name="carlink_transport_restart_hint">Vuelve a abrir MiAuto tras cambiar</string>
+    <string name="carlink_transport_apply_exit">Guardar y salir</string>
+    <string name="carlink_transport_not_supported">El punto de acceso local requiere Android 9 o posterior.</string>
+    <string name="carlink_transport_save_first">Guarda o descarta los otros ajustes pendientes antes de cambiar la conexión.</string>
 </resources>

@@ -1020,4 +1020,12 @@
     <string name="wifi_direct_requires_wifi">Android Auto الأصلي يحتاج إلى Wi-Fi. يرجى تشغيله.</string>
     <string name="wifi_direct_retry_5ghz">بدأ Android Auto الأصلي Wi-Fi Direct على %1$s. إعادة محاولة 5 GHz…</string>
     <string name="wifi_direct_unfriendly_channel">Wi-Fi Direct على %1$s، ولا تستطيع معظم الهواتف الانضمام إليه. أعد تشغيل Wi-Fi وحاول مجدداً.</string>
+    <string name="carlink_transport_title">اتصال CarWith</string>
+    <string name="carlink_transport_auto">تلقائي</string>
+    <string name="carlink_transport_p2p">Wi-Fi Direct</string>
+    <string name="carlink_transport_hotspot">نقطة اتصال محلية (بديل)</string>
+    <string name="carlink_transport_restart_hint">أعد فتح MiAuto بعد التغيير</string>
+    <string name="carlink_transport_apply_exit">حفظ وخروج</string>
+    <string name="carlink_transport_not_supported">تتطلب نقطة الاتصال المحلية Android 9 أو أحدث.</string>
+    <string name="carlink_transport_save_first">احفظ تغييرات الإعدادات الأخرى أو ألغها قبل تغيير الاتصال.</string>
 </resources>
