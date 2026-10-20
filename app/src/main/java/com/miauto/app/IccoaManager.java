@@ -76,6 +76,7 @@ public class IccoaManager {
 
     /** 会话是否正在进行（手机连接中或已连接）。由连接回调维护，看门狗据此避让。 */
     private volatile boolean sessionActive = false;
+    private volatile boolean linkConnected = false;
 
     /**
      * 会话结束后的重新广播。
@@ -215,6 +216,8 @@ public class IccoaManager {
         }
         try { adapter.stopAdvertise(); } catch (Throwable t) { log("stopAdvertise(重播前) 异常: " + t); }
         sdkReady = true;
+        sessionActive = false;
+        linkConnected = false;
         castStarted = false;
         castRetry = 0;
         lastPinCode = null;
@@ -250,6 +253,7 @@ public class IccoaManager {
         main.removeCallbacks(reAdvertiseRunnable);
         cancelAutoRefresh();
         sessionActive = false;
+        linkConnected = false;
         castStarted = false;
         sdkReady = false;
         lastPinCode = null;
@@ -269,6 +273,7 @@ public class IccoaManager {
             try { adapter.disconnect(); } catch (Throwable t) { log("disconnect 异常: " + t); }
         }
         sessionActive = false;
+        linkConnected = false;
         castStarted = false;
         lastPinCode = null;
         scheduleReAdvertise();
@@ -294,7 +299,7 @@ public class IccoaManager {
      * 这里的十秒预算只用于「Surface 已设但尚未 valid」的短暂窗口。
      */
     private void tryStartCast() {
-        if (!sdkReady || castStarted || adapter == null) return;
+        if (!sdkReady || !linkConnected || castStarted || adapter == null) return;
         Surface s = surface;
         if (s == null || !s.isValid()) {
             if (castRetry < CAST_RETRY_MAX) {
@@ -333,16 +338,19 @@ public class IccoaManager {
             log("onConnectStateChanged state=" + stateName(state) + " parameter=" + parameter);
             if (IccoaConnectionPolicy.isTerminalState(state)) {
                 sessionActive = false;
+                linkConnected = false;
                 lastPinCode = null;
                 castStarted = false;
                 scheduleReAdvertise();
                 scheduleAutoRefresh();
             } else if (IccoaConnectionPolicy.isConnectedState(state)) {
                 sessionActive = true;
+                linkConnected = true;
                 main.removeCallbacks(reAdvertiseRunnable);
                 cancelAutoRefresh();
             }
             main.post(() -> listener.onConnectionState(state));
+            if (IccoaConnectionPolicy.isConnectedState(state)) main.post(IccoaManager.this::tryStartCast);
         }
 
         @Override

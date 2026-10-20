@@ -6,12 +6,15 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.CountDownLatch;
 
 /** Minimal unencrypted WFD 1.0 AVC receiver; video decoding remains in the SDK's MediaCodec path. */
 public final class RtspWfdSession implements AutoCloseable {
     public interface Listener {
         void ready(String session, int width, int height);
         void video(byte[] data, long ptsUs);
+        default void audioFormat(int sampleRate, int channels) { }
+        default void audio(byte[] data, long ptsUs) { }
         void stopped(String reason);
         void log(String message);
     }
@@ -20,6 +23,7 @@ public final class RtspWfdSession implements AutoCloseable {
     private final Listener listener;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean stopped = new AtomicBoolean();
+    private final CountDownLatch playReady = new CountDownLatch(1);
     private final Map<Integer, String> pending = new HashMap<>();
     private final DatagramSocket rtp, rtcp;
     private volatile Socket control, uibc;
@@ -78,12 +82,19 @@ public final class RtspWfdSession implements AutoCloseable {
                 break;
             case "GET_PARAMETER":
                 StringBuilder body = new StringBuilder();
+                Set<String> requested = new HashSet<>();
                 for (String key : message.body.split("\\r?\\n")) {
                     key = key.trim().toLowerCase(Locale.US);
+                    int colon = key.indexOf(':');
+                    if (colon >= 0) key = key.substring(0, colon).trim();
                     if (key.isEmpty()) continue;
+                    requested.add(key);
                     String value = capability(key);
                     body.append(key).append(": ").append(value).append("\r\n");
                 }
+                listener.log("Requested WFD parameters: " + requested);
+                if (!requested.isEmpty() && !requested.contains("wfd_car_display_mode"))
+                    body.append("wfd_car_display_mode: ").append(capability("wfd_car_display_mode")).append("\r\n");
                 RtspMessage.write(output, "RTSP/1.0 200 OK", headers, body.toString());
                 break;
             case "SET_PARAMETER":
@@ -94,6 +105,7 @@ public final class RtspWfdSession implements AutoCloseable {
                     presentation = uri;
                 }
                 if (values.containsKey("wfd_video_formats")) listener.log("Selected AVC format: " + values.get("wfd_video_formats"));
+                if (values.containsKey("wfd_audio_codecs")) listener.log("Selected audio: " + values.get("wfd_audio_codecs"));
                 if (values.containsKey("wfd_uibc_capability")) {
                     for (String part : values.get("wfd_uibc_capability").split(";")) {
                         part = part.trim();
@@ -107,6 +119,7 @@ public final class RtspWfdSession implements AutoCloseable {
                 if ("SETUP".equalsIgnoreCase(trigger)) send("SETUP", presentation, "");
                 else if ("TEARDOWN".equalsIgnoreCase(trigger)) finish("Source teardown");
                 else if ("PAUSE".equalsIgnoreCase(trigger)) send("PAUSE", presentation, "");
+                else if ("PLAY".equalsIgnoreCase(trigger) || "RESUME".equalsIgnoreCase(trigger)) send("PLAY", presentation, "");
                 break;
             case "TEARDOWN":
                 RtspMessage.write(output, "RTSP/1.0 200 OK", headers, ""); finish("Source teardown"); break;
@@ -121,13 +134,21 @@ public final class RtspWfdSession implements AutoCloseable {
         if (method == null) return;
         if (!message.start.startsWith("RTSP/1.0 200")) throw new IOException(method + " failed: " + message.start);
         if ("SETUP".equals(method)) {
+            String transport = message.header("transport");
+            listener.log("Selected transport: " + transport);
+            if (transport != null) {
+                String kind = transport.toUpperCase(Locale.US);
+                if (!kind.startsWith("RTP/AVP") || kind.contains("TCP") || kind.contains("INTERLEAVED"))
+                    throw new IOException("Unsupported WFD media transport: " + transport);
+            }
             rtspSession = message.header("session");
             if (rtspSession == null) throw new IOException("SETUP response has no session");
             rtspSession = rtspSession.split(";", 2)[0].trim();
             send("PLAY", presentation, "");
         } else if ("PLAY".equals(method) && !ready) {
-            ready = true;
             listener.ready(id, width, height);
+            ready = true;
+            playReady.countDown();
             listener.log("WFD PLAY accepted; awaiting AVC RTP");
         }
     }
@@ -135,7 +156,7 @@ public final class RtspWfdSession implements AutoCloseable {
         switch (key) {
             // Native CEA index 5 (720p30), constrained baseline, level 3.2.
             case "wfd_video_formats": return "28 00 01 02 00000020 00000000 00000000 00 0000 0000 00 none none";
-            case "wfd_audio_codecs": return "none"; // Video compatibility path; no false audio capability.
+            case "wfd_audio_codecs": return "AAC 00000001 00"; // AAC-LC, 48kHz stereo, decoded by the SDK MediaCodec path.
             case "wfd_client_rtp_ports": return "RTP/AVP/UDP;unicast " + rtp.getLocalPort() + " 0 mode=play";
             case "wfd_car_display_mode": return "mode=0;display=1280:720;dpi=160;fps=30";
             case "wfd_av_raw_packet": return "false";
@@ -165,15 +186,25 @@ public final class RtspWfdSession implements AutoCloseable {
         AtomicBoolean firstFrame = new AtomicBoolean();
         MpegTsAvc parser = new MpegTsAvc((data, pts) -> {
             if (!closed.get() && ready) {
-                if (firstFrame.compareAndSet(false, true)) listener.log("First AVC frame: bytes=" + data.length + ", ptsUs=" + pts);
+                if (firstFrame.compareAndSet(false, true)) listener.log("First AVC access unit: bytes=" + data.length + ", ptsUs=" + pts);
                 listener.video(data, pts);
             }
         });
+        AdtsAudio audio = new AdtsAudio(new AdtsAudio.Listener() {
+            public void format(int sampleRate, int channels) {
+                listener.log("AAC format: " + sampleRate + " Hz, channels=" + channels);
+                listener.audioFormat(sampleRate, channels);
+            }
+            public void frame(byte[] data, long pts) { if (!closed.get() && ready) listener.audio(data, pts); }
+        });
+        MpegTsAvc audioPes = new MpegTsAvc(audio::push, true);
         byte[] bytes = new byte[65535];
         DatagramPacket packet = new DatagramPacket(bytes, bytes.length);
         try {
             InetAddress peer = InetAddress.getByName(host);
             boolean firstPacket = true;
+            try { playReady.await(); }
+            catch (InterruptedException error) { Thread.currentThread().interrupt(); return; }
             while (!closed.get()) {
                 packet.setLength(bytes.length); rtp.receive(packet);
                 if (peer.equals(packet.getAddress())) {
@@ -182,6 +213,7 @@ public final class RtspWfdSession implements AutoCloseable {
                         listener.log("First RTP packet: bytes=" + packet.getLength() + ", payloadType=" + (bytes[1] & 127));
                     }
                     parser.rtp(bytes, packet.getLength());
+                    audioPes.rtp(bytes, packet.getLength());
                 }
             }
         } catch (IOException | RuntimeException error) {
@@ -239,7 +271,9 @@ public final class RtspWfdSession implements AutoCloseable {
     }
     @Override public void close() { finish("Closed by app"); }
     private void finish(String reason) {
-        if (closed.compareAndSet(false, true)) { rtp.close(); rtcp.close(); closeSocket(control); closeSocket(uibc); }
+        if (closed.compareAndSet(false, true)) {
+            rtp.close(); rtcp.close(); closeSocket(control); closeSocket(uibc); playReady.countDown();
+        }
         if (stopped.compareAndSet(false, true)) { listener.log(reason); listener.stopped(reason); }
     }
     private static void closeSocket(Socket socket) { if (socket != null) try { socket.close(); } catch (IOException ignored) { } }

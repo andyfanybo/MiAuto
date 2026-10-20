@@ -11,9 +11,9 @@ For armeabi-v7a only, CMake now builds our own small `libovmsink.so` JNI bridge
 when no vendor library is supplied. It forwards the existing SDK native ABI to
 an application-owned RTSP/RTP receiver. Other ABIs keep existing behavior.
 The receiver implements WFD OPTIONS / GET_PARAMETER / SET_PARAMETER / SETUP /
-PLAY / PAUSE / TEARDOWN and unencrypted RTP/MP2T AVC PES delivery into the SDK's
-existing MediaCodec path. It advertises 720p30 AVC and does not advertise HEVC,
-HDCP, raw AV packets, or unsupported cast audio. UIBC forwarding is supported
+PLAY / PAUSE / TEARDOWN, paired RTP/RTCP ports and unencrypted RTP/MP2T AVC/AAC
+PES delivery into the SDK's existing MediaCodec paths. It advertises 720p30 AVC
+and AAC-LC 48kHz stereo, without HEVC, HDCP or raw AV packets. UIBC forwarding is supported
 when the peer negotiates an unencrypted generic input TCP port.
 
 This is an independent compatibility implementation, not a rebuilt vendor SDK.
@@ -49,3 +49,23 @@ this field/checksum when deduplicating previous SDK copies. Six independent
 fixture/CLI tests check relocation, checksum integrity, idempotence, malformed
 input rejection and preservation of the original SDK. The resulting SDK binary
 remains private and is not committed to the repository.
+
+
+## AVC/AAC and playback readiness
+
+The SDK's AAC decoder explicitly expects ADTS framing (`is-adts=1`). The
+compatibility receiver therefore preserves complete ADTS frames, advertises only
+AAC-LC 48kHz stereo and calls the SDK's audio-format/data callbacks with
+STREAM_CAST_MUSIC (16). Five audio tests exercise fragmented/multiple ADTS frames,
+unsupported formats and AAC PES selection. The full fake-phone negotiation now
+checks audio/video packets and RTCP replies. A callback integration test ensures
+PLAY acceptance does not announce an initialized video stream: that notification
+waits for actual AVC data. The controller also guards `startCast` while no session
+is connected, including after disconnect/re-advertise with a leftover Surface.
+
+The transport advertises normal-car-display parameters alongside WFD capabilities
+and logs selected audio/transport. It currently receives UDP MP2T; a peer selecting
+TCP/interleaving is rejected explicitly rather than reporting video readiness.
+Native audio-clock tuning is not implemented and reports false; decoded audio
+buffering remains owned by the SDK. Real-device audio, video, input and long-session
+behavior still require validation.

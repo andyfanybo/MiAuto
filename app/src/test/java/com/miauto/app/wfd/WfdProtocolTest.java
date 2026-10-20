@@ -43,12 +43,14 @@ public class WfdProtocolTest {
     }
     @Test public void fullRtspNegotiationAcceptsRtpAndClosesSockets() throws Exception {
         ExecutorService executor = Executors.newSingleThreadExecutor();
-        CountDownLatch ready = new CountDownLatch(1), frame = new CountDownLatch(1), stopped = new CountDownLatch(1);
+        CountDownLatch ready = new CountDownLatch(1), frame = new CountDownLatch(1), audio = new CountDownLatch(1), stopped = new CountDownLatch(1);
         try (ServerSocket source = new ServerSocket(0)) {
             source.setSoTimeout(3000);
             RtspWfdSession sink = new RtspWfdSession("127.0.0.1", source.getLocalPort(), new RtspWfdSession.Listener() {
                 public void ready(String id, int w, int h) { assertEquals(1280, w); ready.countDown(); }
                 public void video(byte[] data, long pts) { frame.countDown(); }
+                public void audioFormat(int rate, int channels) { assertEquals(48000, rate); assertEquals(2, channels); }
+                public void audio(byte[] bytes, long pts) { assertArrayEquals(AdtsAudioTest.frame(), bytes); audio.countDown(); }
                 public void stopped(String reason) { stopped.countDown(); }
                 public void log(String message) { }
             });
@@ -60,9 +62,11 @@ public class WfdProtocolTest {
                     assertEquals("10", RtspMessage.read(in).header("cseq"));
                     RtspMessage m2 = RtspMessage.read(in);
                     reply(out, m2.header("cseq"), Collections.emptyMap());
-                    request(out, "GET_PARAMETER", 11, "wfd_video_formats\r\nwfd_client_rtp_ports\r\n");
+                    request(out, "GET_PARAMETER", 11, "wfd_video_formats\r\nwfd_client_rtp_ports\r\nwfd_audio_codecs\r\n");
                     RtspMessage capabilities = RtspMessage.read(in);
                     assertTrue(capabilities.body.contains("00000020"));
+                    assertTrue(capabilities.body.contains("wfd_audio_codecs: AAC 00000001 00"));
+                    assertTrue(capabilities.body.contains("wfd_car_display_mode: mode=0;display=1280:720"));
                     int port = Integer.parseInt(capabilities.body.split("unicast ")[1].split(" ")[0]);
                     request(out, "SET_PARAMETER", 12, "wfd_presentation_URL: rtsp://127.0.0.1/wfd1.0/streamid=0 none\r\nwfd_trigger_method: SETUP\r\n");
                     assertEquals("12", RtspMessage.read(in).header("cseq"));
@@ -77,6 +81,8 @@ public class WfdProtocolTest {
                     try (DatagramSocket udp = new DatagramSocket()) {
                         byte[] video = rtpPes(1, 0, new byte[]{0, 0, 0, 1, 0x65, 9});
                         udp.send(new DatagramPacket(video, video.length, InetAddress.getLoopbackAddress(), port));
+                        byte[] aac = AdtsAudioTest.audioPacket(2, AdtsAudioTest.frame());
+                        udp.send(new DatagramPacket(aac,aac.length,InetAddress.getLoopbackAddress(),port));
                         byte[] sr = new byte[28];sr[0]=(byte)0x80;sr[1]=(byte)200;sr[3]=6;sr[4]=1;
                         udp.setSoTimeout(2000);
                         udp.send(new DatagramPacket(sr,sr.length,InetAddress.getLoopbackAddress(),port+1));
@@ -84,6 +90,7 @@ public class WfdProtocolTest {
                         assertEquals(201,rr.getData()[1]&255);assertEquals(202,rr.getData()[9]&255);
                     }
                     assertTrue(frame.await(2, TimeUnit.SECONDS));
+                    assertTrue(audio.await(2, TimeUnit.SECONDS));
                     request(out, "TEARDOWN", 13, ""); assertEquals("13", RtspMessage.read(in).header("cseq"));
                     assertTrue(stopped.await(2, TimeUnit.SECONDS));
                 } catch (Exception e) { throw new RuntimeException(e); }
@@ -91,10 +98,10 @@ public class WfdProtocolTest {
             try { sink.start(); script.get(8, TimeUnit.SECONDS); } finally { sink.close(); }
         } finally { executor.shutdownNow(); }
     }
-    private static void request(OutputStream out, String method, int number, String body) throws IOException {
+    static void request(OutputStream out, String method, int number, String body) throws IOException {
         RtspMessage.write(out, method + " * RTSP/1.0", Collections.singletonMap("CSeq", Integer.toString(number)), body);
     }
-    private static void reply(OutputStream out, String number, Map<String, String> extra) throws IOException {
+    static void reply(OutputStream out, String number, Map<String, String> extra) throws IOException {
         Map<String, String> headers = new LinkedHashMap<>(extra); headers.put("CSeq", number);
         RtspMessage.write(out, "RTSP/1.0 200 OK", headers, "");
     }

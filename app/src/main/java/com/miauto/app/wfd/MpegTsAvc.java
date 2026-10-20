@@ -3,16 +3,18 @@ package com.miauto.app.wfd;
 import java.io.ByteArrayOutputStream;
 import java.util.*;
 
-/** RTP/MP2T -> complete AVC PES access units. Malformed/lost packets never reach the decoder. */
+/** RTP/MP2T -> complete AVC or AAC PES units. Incomplete/lost packets are discarded. */
 public final class MpegTsAvc {
-    public interface Listener { void video(byte[] data, long ptsUs); }
+    public interface Listener { void sample(byte[] data, long ptsUs); }
     private final Listener listener;
+    private final boolean audio;
     private int pmtPid = -1, videoPid = -1, lastSequence = -1, continuity = -1;
     private final ByteArrayOutputStream pes = new ByteArrayOutputStream();
     private boolean collecting;
     private long pts;
     private int remaining = -1;
-    public MpegTsAvc(Listener listener) { this.listener = listener; }
+    public MpegTsAvc(Listener listener) { this(listener, false); }
+    public MpegTsAvc(Listener listener, boolean audio) { this.listener = listener; this.audio = audio; }
     public void rtp(byte[] data, int length) {
         if (length < 12 || length > data.length || (data[0] & 0xc0) != 0x80 || (data[1] & 0x7f) != 33) return;
         int offset = 12 + (data[0] & 15) * 4;
@@ -51,7 +53,7 @@ public final class MpegTsAvc {
         // PAT/PMT normally precede video; accepting an AVC PES stream id also
         // permits a late join. Only the chosen video PID is assembled.
         if (videoPid == -1 && start && offset + 9 <= end && data[offset] == 0 && data[offset + 1] == 0
-                && data[offset + 2] == 1 && (data[offset + 3] & 0xf0) == 0xe0) videoPid = pid;
+                && data[offset + 2] == 1 && (audio ? (data[offset + 3] & 0xe0) == 0xc0 : (data[offset + 3] & 0xf0) == 0xe0)) videoPid = pid;
         if (pid != videoPid) return;
         int counter = data[base + 3] & 15;
         if (continuity == counter) return;
@@ -96,14 +98,15 @@ public final class MpegTsAvc {
         } else if (pid == pmtPid && data[offset] == 2) {
             int p = offset + 12 + (((data[offset + 10] & 15) << 8) | (data[offset + 11] & 255));
             while (p + 5 <= limit) {
-                if ((data[p] & 255) == 0x1b) { videoPid = ((data[p + 1] & 31) << 8) | (data[p + 2] & 255); break; }
+                if ((data[p] & 255) == (audio ? 0x0f : 0x1b)) { videoPid = ((data[p + 1] & 31) << 8) | (data[p + 2] & 255); break; }
                 p += 5 + (((data[p + 3] & 15) << 8) | (data[p + 4] & 255));
             }
         }
     }
     private void emit() {
         byte[] bytes = pes.toByteArray();
-        if (bytes.length >= 4 && bytes[0] == 0 && bytes[1] == 0 && (bytes[2] == 1 || (bytes[2] == 0 && bytes[3] == 1))) listener.video(bytes, pts);
+        if (audio && bytes.length != 0) { listener.sample(bytes, pts); return; }
+        if (bytes.length >= 4 && bytes[0] == 0 && bytes[1] == 0 && (bytes[2] == 1 || (bytes[2] == 0 && bytes[3] == 1))) listener.sample(bytes, pts);
     }
     private void resetPes() { collecting = false; remaining = -1; pes.reset(); }
     private static int u16(byte[] data, int offset) { return ((data[offset] & 255) << 8) | (data[offset + 1] & 255); }

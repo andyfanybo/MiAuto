@@ -17,12 +17,14 @@ public final class SinkNative {
     public static void onNativeWfdSinkStarted(String id) { }
     public static void onUibcEncrypted(String id, boolean enabled) { }
     public static void onNativeCastVideoInitialized(String id, String mime, int w, int h) { }
+    public static void onNativeCastAudioInitialized(String id, String mime, int rate, int channels) { }
+    public static void onNativeAudioDataReceived(String id, int type, int size, byte[] data) { }
     public static void onNativeVideoDataReceived(String id, int type, int size, byte[] data, long pts) { }
     public static void onNativeWfdSinkStopped(String id) { stopped.countDown(); }
     private static void check(boolean result, String message) { if(!result) throw new AssertionError(message); }
     public static void main(String[] args) throws Exception {
         HashMap<String,String> parameters = new HashMap<>(); parameters.put("kWhatAudioLatency","100");
-        check(setParameter(null,parameters),"pre-session latency call must not crash");
+        check(!setParameter(null,parameters),"unsupported pre-session latency tuning reports false without crashing");
         check(!start("127.0.0.1",-1,1280,720,160,30,false,false,false),"invalid peer must fail");
         check(!start("127.0.0.1",7236,1280,720,160,30,true,false,false),"unsupported HEVC must fail");
         check(!pause("missing"),"pause nonexistent session");

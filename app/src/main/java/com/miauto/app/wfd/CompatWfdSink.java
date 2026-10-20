@@ -19,13 +19,28 @@ public final class CompatWfdSink {
         try {
             final RtspWfdSession[] owner = new RtspWfdSession[1];
             RtspWfdSession next = new RtspWfdSession(host, port, new RtspWfdSession.Listener() {
+                private int width, height;
+                private boolean videoAnnounced;
                 public void ready(String id, int w, int h) {
+                    width = w; height = h;
                     callback("onNativeWfdSinkStarted", new Class<?>[]{String.class}, id);
                     callback("onUibcEncrypted", new Class<?>[]{String.class, boolean.class}, id, false);
-                    callback("onNativeCastVideoInitialized", new Class<?>[]{String.class, String.class, int.class, int.class}, id, "video/avc", w, h);
                 }
                 public void video(byte[] data, long pts) {
+                    if (!videoAnnounced) {
+                        videoAnnounced = true;
+                        callback("onNativeCastVideoInitialized", new Class<?>[]{String.class, String.class, int.class, int.class},
+                                owner[0].id(), "video/avc", width, height);
+                    }
                     callback("onNativeVideoDataReceived", new Class<?>[]{String.class, int.class, int.class, byte[].class, long.class}, owner[0].id(), 1, data.length, data, pts);
+                }
+                public void audioFormat(int rate, int channels) {
+                    callback("onNativeCastAudioInitialized", new Class<?>[]{String.class, String.class, int.class, int.class},
+                            owner[0].id(), "audio/mp4a-latm", rate, channels);
+                }
+                public void audio(byte[] data, long pts) {
+                    callback("onNativeAudioDataReceived", new Class<?>[]{String.class, int.class, int.class, byte[].class},
+                            owner[0].id(), 16, data.length, data);
                 }
                 public void stopped(String reason) {
                     callback("onNativeWfdSinkStopped", new Class<?>[]{String.class}, owner[0].id());
@@ -44,9 +59,9 @@ public final class CompatWfdSink {
     public static synchronized boolean resume(String id) { return matches(id) && session.pause(false); }
     public static synchronized boolean input(String id, byte[] data) { return matches(id) && session.input(data); }
     public static synchronized boolean parameter(String id, HashMap<?, ?> values) {
-        // The SDK updates audio latency even before a WFD session exists. This
-        // video-only path has no audio clock to update; report that explicitly.
-        return values != null && values.containsKey("kWhatAudioLatency");
+        // This receiver has no independent renderer/audio clock. The SDK owns
+        // decoded-audio buffering; do not claim to apply native clock tuning.
+        return false;
     }
     private static boolean matches(String id) { return session != null && id != null && id.equals(session.id()); }
     private static void callback(String name, Class<?>[] signature, Object... args) {
