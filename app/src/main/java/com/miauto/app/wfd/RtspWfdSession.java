@@ -107,6 +107,7 @@ public final class RtspWfdSession implements AutoCloseable {
                 if (values.containsKey("wfd_video_formats")) listener.log("Selected AVC format: " + values.get("wfd_video_formats"));
                 if (values.containsKey("wfd_audio_codecs")) listener.log("Selected audio: " + values.get("wfd_audio_codecs"));
                 if (values.containsKey("wfd_uibc_capability")) {
+                    listener.log("Selected UIBC: " + values.get("wfd_uibc_capability"));
                     for (String part : values.get("wfd_uibc_capability").split(";")) {
                         part = part.trim();
                         if (part.startsWith("port=")) {
@@ -144,6 +145,11 @@ public final class RtspWfdSession implements AutoCloseable {
             rtspSession = message.header("session");
             if (rtspSession == null) throw new IOException("SETUP response has no session");
             rtspSession = rtspSession.split(";", 2)[0].trim();
+            // The source opens its negotiated input server during setup. Connect
+            // before PLAY, even when the user has not touched the display yet.
+            // Waiting for the first touch leaves this negotiated channel absent
+            // while the phone is trying to start its projection session.
+            connectUibc();
             send("PLAY", presentation, "");
         } else if ("PLAY".equals(method) && !ready) {
             listener.ready(id, width, height);
@@ -261,13 +267,24 @@ public final class RtspWfdSession implements AutoCloseable {
     public synchronized boolean input(byte[] data) {
         if (closed.get() || !ready || uibcPort < 1 || uibcPort > 65535 || data == null || data.length > 65535) return false;
         try {
-            if (uibc == null) {
-                uibc = new Socket();
-                if (closed.get()) { uibc.close(); return false; }
-                uibc.connect(new InetSocketAddress(host, uibcPort), 1500);
-            }
+            connectUibc();
             uibc.getOutputStream().write(data); uibc.getOutputStream().flush(); return true;
         } catch (IOException error) { closeSocket(uibc); uibc = null; return false; }
+    }
+    private synchronized void connectUibc() throws IOException {
+        if (uibcPort < 1 || uibcPort > 65535 || uibc != null) return;
+        if (closed.get()) throw new IOException("UIBC session closed");
+        Socket socket = new Socket();
+        uibc = socket;
+        try {
+            socket.connect(new InetSocketAddress(host, uibcPort), 1500);
+            socket.setTcpNoDelay(true);
+            if (closed.get()) throw new IOException("UIBC session closed during connection");
+            listener.log("UIBC connected to " + host + ":" + uibcPort + " before media playback");
+        } catch (IOException error) {
+            closeSocket(socket); uibc = null;
+            throw new IOException("UIBC connection failed: " + error.getMessage(), error);
+        }
     }
     @Override public void close() { finish("Closed by app"); }
     private void finish(String reason) {

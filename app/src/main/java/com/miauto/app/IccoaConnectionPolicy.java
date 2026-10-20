@@ -24,8 +24,12 @@ public final class IccoaConnectionPolicy {
     }
 
     public static boolean isConnectedState(int state) {
-        return state == CONNECTED || state == CAST_CONNECTED ||
-                state == CAST_DISCONNECTED || state == GO_TO_HOME ||
-                state == BACK_TO_FOREGROUND;
+        // Cast teardown and navigation events do not establish a connection.
+        // They may occur before DISCONNECTED and must not revive a failed cast.
+        return state == CONNECTED || state == CAST_CONNECTED;
+    }
+
+    public static boolean isVideoReadyState(int state) {
+        return state == CAST_CONNECTED;
     }
 }

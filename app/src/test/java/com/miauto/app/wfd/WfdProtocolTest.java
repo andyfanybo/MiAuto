@@ -44,8 +44,9 @@ public class WfdProtocolTest {
     @Test public void fullRtspNegotiationAcceptsRtpAndClosesSockets() throws Exception {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         CountDownLatch ready = new CountDownLatch(1), frame = new CountDownLatch(1), audio = new CountDownLatch(1), stopped = new CountDownLatch(1);
-        try (ServerSocket source = new ServerSocket(0)) {
+        try (ServerSocket source = new ServerSocket(0); ServerSocket inputServer = new ServerSocket(0)) {
             source.setSoTimeout(3000);
+            inputServer.setSoTimeout(2000);
             RtspWfdSession sink = new RtspWfdSession("127.0.0.1", source.getLocalPort(), new RtspWfdSession.Listener() {
                 public void ready(String id, int w, int h) { assertEquals(1280, w); ready.countDown(); }
                 public void video(byte[] data, long pts) { frame.countDown(); }
@@ -68,31 +69,41 @@ public class WfdProtocolTest {
                     assertTrue(capabilities.body.contains("wfd_audio_codecs: AAC 00000001 00"));
                     assertTrue(capabilities.body.contains("wfd_car_display_mode: mode=0;display=1280:720"));
                     int port = Integer.parseInt(capabilities.body.split("unicast ")[1].split(" ")[0]);
-                    request(out, "SET_PARAMETER", 12, "wfd_presentation_URL: rtsp://127.0.0.1/wfd1.0/streamid=0 none\r\nwfd_trigger_method: SETUP\r\n");
+                    request(out, "SET_PARAMETER", 12, "wfd_presentation_URL: rtsp://127.0.0.1/wfd1.0/streamid=0 none\r\n"
+                            + "wfd_uibc_capability: input_category_list=GENERIC;generic_cap_list=SingleTouch;port="
+                            + inputServer.getLocalPort() + "\r\nwfd_trigger_method: SETUP\r\n");
                     assertEquals("12", RtspMessage.read(in).header("cseq"));
                     RtspMessage setup = RtspMessage.read(in);
                     assertTrue(setup.start.startsWith("SETUP ")); assertEquals(0, port % 2);
                     assertTrue(setup.header("Transport").contains("client_port="+port+"-"+(port+1)));
                     reply(out, setup.header("cseq"), Collections.singletonMap("Session", "fake-session;timeout=30"));
-                    RtspMessage play = RtspMessage.read(in);
-                    assertTrue(play.start.startsWith("PLAY ")); assertEquals("fake-session", play.header("session"));
-                    reply(out, play.header("cseq"), Collections.emptyMap());
-                    assertTrue(ready.await(2, TimeUnit.SECONDS));
-                    try (DatagramSocket udp = new DatagramSocket()) {
-                        byte[] video = rtpPes(1, 0, new byte[]{0, 0, 0, 1, 0x65, 9});
-                        udp.send(new DatagramPacket(video, video.length, InetAddress.getLoopbackAddress(), port));
-                        byte[] aac = AdtsAudioTest.audioPacket(2, AdtsAudioTest.frame());
-                        udp.send(new DatagramPacket(aac,aac.length,InetAddress.getLoopbackAddress(),port));
-                        byte[] sr = new byte[28];sr[0]=(byte)0x80;sr[1]=(byte)200;sr[3]=6;sr[4]=1;
-                        udp.setSoTimeout(2000);
-                        udp.send(new DatagramPacket(sr,sr.length,InetAddress.getLoopbackAddress(),port+1));
-                        DatagramPacket rr = new DatagramPacket(new byte[128],128);udp.receive(rr);
-                        assertEquals(201,rr.getData()[1]&255);assertEquals(202,rr.getData()[9]&255);
+                    // A source may wait for the advertised input channel before
+                    // accepting PLAY. No user input has happened at this point.
+                    try (Socket inputSocket = inputServer.accept()) {
+                        inputSocket.setSoTimeout(2000);
+                        RtspMessage play = RtspMessage.read(in);
+                        assertTrue(play.start.startsWith("PLAY ")); assertEquals("fake-session", play.header("session"));
+                        reply(out, play.header("cseq"), Collections.emptyMap());
+                        assertTrue(ready.await(2, TimeUnit.SECONDS));
+                        assertTrue(sink.input(new byte[]{1,2,3}));
+                        for (int expected : new int[]{1,2,3}) assertEquals(expected, inputSocket.getInputStream().read());
+                        try (DatagramSocket udp = new DatagramSocket()) {
+                            byte[] video = rtpPes(1, 0, new byte[]{0, 0, 0, 1, 0x65, 9});
+                            udp.send(new DatagramPacket(video, video.length, InetAddress.getLoopbackAddress(), port));
+                            byte[] aac = AdtsAudioTest.audioPacket(2, AdtsAudioTest.frame());
+                            udp.send(new DatagramPacket(aac,aac.length,InetAddress.getLoopbackAddress(),port));
+                            byte[] sr = new byte[28];sr[0]=(byte)0x80;sr[1]=(byte)200;sr[3]=6;sr[4]=1;
+                            udp.setSoTimeout(2000);
+                            udp.send(new DatagramPacket(sr,sr.length,InetAddress.getLoopbackAddress(),port+1));
+                            DatagramPacket rr = new DatagramPacket(new byte[128],128);udp.receive(rr);
+                            assertEquals(201,rr.getData()[1]&255);assertEquals(202,rr.getData()[9]&255);
+                        }
+                        assertTrue(frame.await(2, TimeUnit.SECONDS));
+                        assertTrue(audio.await(2, TimeUnit.SECONDS));
+                        request(out, "TEARDOWN", 13, ""); assertEquals("13", RtspMessage.read(in).header("cseq"));
+                        assertTrue(stopped.await(2, TimeUnit.SECONDS));
+                        assertEquals(-1, inputSocket.getInputStream().read());
                     }
-                    assertTrue(frame.await(2, TimeUnit.SECONDS));
-                    assertTrue(audio.await(2, TimeUnit.SECONDS));
-                    request(out, "TEARDOWN", 13, ""); assertEquals("13", RtspMessage.read(in).header("cseq"));
-                    assertTrue(stopped.await(2, TimeUnit.SECONDS));
                 } catch (Exception e) { throw new RuntimeException(e); }
             });
             try { sink.start(); script.get(8, TimeUnit.SECONDS); } finally { sink.close(); }

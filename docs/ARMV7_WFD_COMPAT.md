@@ -69,3 +69,22 @@ TCP/interleaving is rejected explicitly rather than reporting video readiness.
 Native audio-clock tuning is not implemented and reports false; decoded audio
 buffering remains owned by the SDK. Real-device audio, video, input and long-session
 behavior still require validation.
+
+## Device follow-up: eager input channel and cast teardown
+
+On the Oct 21 device attempt, the Xiaomi phone accepted AAC and UDP ports
+19000/19001, then reset RTSP/media/control shortly after PLAY without sending
+RTP. Its SET_PARAMETER advertised an unencrypted UIBC input server on port 4321.
+The receiver previously deferred that TCP connection until the first touch; it
+now connects the negotiated input channel after SETUP and before PLAY. The full
+fake-phone test waits for this connection before accepting playback, checks
+input bytes on the existing socket and verifies teardown closes it. This corrects
+a missing negotiated channel; its effect on real phone projection still needs
+validation.
+
+A second observed bug treated CAST_DISCONNECTED (5) as a new connection, causing
+startCast with a null codec during teardown. Only CONNECTED (2) and
+CAST_CONNECTED (4) now establish UI connection state, and only initialized video
+(4) permits starting the decoder. Teardown/navigation events preserve other
+state without establishing video readiness. A regression check covers the
+teardown event and distinguishes link connection from initialized video.
