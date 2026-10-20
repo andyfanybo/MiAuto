@@ -67,7 +67,8 @@ public class WfdProtocolTest {
                     request(out, "SET_PARAMETER", 12, "wfd_presentation_URL: rtsp://127.0.0.1/wfd1.0/streamid=0 none\r\nwfd_trigger_method: SETUP\r\n");
                     assertEquals("12", RtspMessage.read(in).header("cseq"));
                     RtspMessage setup = RtspMessage.read(in);
-                    assertTrue(setup.start.startsWith("SETUP ")); assertTrue(setup.header("Transport").contains("client_port="+port));
+                    assertTrue(setup.start.startsWith("SETUP ")); assertEquals(0, port % 2);
+                    assertTrue(setup.header("Transport").contains("client_port="+port+"-"+(port+1)));
                     reply(out, setup.header("cseq"), Collections.singletonMap("Session", "fake-session;timeout=30"));
                     RtspMessage play = RtspMessage.read(in);
                     assertTrue(play.start.startsWith("PLAY ")); assertEquals("fake-session", play.header("session"));
@@ -76,6 +77,11 @@ public class WfdProtocolTest {
                     try (DatagramSocket udp = new DatagramSocket()) {
                         byte[] video = rtpPes(1, 0, new byte[]{0, 0, 0, 1, 0x65, 9});
                         udp.send(new DatagramPacket(video, video.length, InetAddress.getLoopbackAddress(), port));
+                        byte[] sr = new byte[28];sr[0]=(byte)0x80;sr[1]=(byte)200;sr[3]=6;sr[4]=1;
+                        udp.setSoTimeout(2000);
+                        udp.send(new DatagramPacket(sr,sr.length,InetAddress.getLoopbackAddress(),port+1));
+                        DatagramPacket rr = new DatagramPacket(new byte[128],128);udp.receive(rr);
+                        assertEquals(201,rr.getData()[1]&255);assertEquals(202,rr.getData()[9]&255);
                     }
                     assertTrue(frame.await(2, TimeUnit.SECONDS));
                     request(out, "TEARDOWN", 13, ""); assertEquals("13", RtspMessage.read(in).header("cseq"));

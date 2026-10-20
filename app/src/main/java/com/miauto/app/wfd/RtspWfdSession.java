@@ -2,6 +2,8 @@ package com.miauto.app.wfd;
 
 import java.io.*;
 import java.net.*;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -19,7 +21,7 @@ public final class RtspWfdSession implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean stopped = new AtomicBoolean();
     private final Map<Integer, String> pending = new HashMap<>();
-    private final DatagramSocket rtp;
+    private final DatagramSocket rtp, rtcp;
     private volatile Socket control, uibc;
     private OutputStream output;
     private int sequence = 1, uibcPort;
@@ -31,18 +33,22 @@ public final class RtspWfdSession implements AutoCloseable {
         if (host == null || host.isEmpty() || port < 1 || port > 65535) throw new IOException("Invalid WFD peer");
         this.host = host; this.port = port; this.id = host + ":" + port; this.listener = listener;
         presentation = "rtsp://" + host + "/wfd1.0/streamid=0";
-        rtp = new DatagramSocket(0);
-        rtp.setReceiveBufferSize(1024 * 1024);
+        DatagramSocket[] ports = allocatePorts();
+        rtp = ports[0]; rtcp = ports[1];
+        try { rtp.setReceiveBufferSize(1024 * 1024); }
+        catch (SocketException error) { rtp.close(); rtcp.close(); throw error; }
     }
     public String id() { return id; }
     public void start() {
         Thread controlThread = new Thread(this::run, "MiAuto-WFD-RTSP"); controlThread.setDaemon(true); controlThread.start();
         Thread receiver = new Thread(this::receive, "MiAuto-WFD-RTP"); receiver.setDaemon(true); receiver.start();
+        Thread reports = new Thread(this::receiveReports, "MiAuto-WFD-RTCP"); reports.setDaemon(true); reports.start();
     }
     private void run() {
         String failure = "RTSP connection closed";
         try {
             Socket socket = new Socket(); control = socket;
+            if (closed.get()) { socket.close(); return; }
             socket.connect(new InetSocketAddress(host, port), 7000);
             socket.setSoTimeout(60000); socket.setTcpNoDelay(true);
             output = socket.getOutputStream();
@@ -151,23 +157,70 @@ public final class RtspWfdSession implements AutoCloseable {
         headers.put("User-Agent", "MiAuto-AVC-Sink/1.0");
         if (rtspSession != null) headers.put("Session", rtspSession);
         if ("OPTIONS".equals(method)) headers.put("Require", "org.wfa.wfd1.0");
-        if ("SETUP".equals(method)) headers.put("Transport", "RTP/AVP/UDP;unicast;client_port=" + rtp.getLocalPort());
+        if ("SETUP".equals(method)) headers.put("Transport", "RTP/AVP/UDP;unicast;client_port=" + rtp.getLocalPort() + "-" + rtcp.getLocalPort());
         pending.put(number, method);
         RtspMessage.write(output, method + " " + uri + " RTSP/1.0", headers, body);
     }
     private void receive() {
-        MpegTsAvc parser = new MpegTsAvc((data, pts) -> { if (!closed.get() && ready) listener.video(data, pts); });
+        AtomicBoolean firstFrame = new AtomicBoolean();
+        MpegTsAvc parser = new MpegTsAvc((data, pts) -> {
+            if (!closed.get() && ready) {
+                if (firstFrame.compareAndSet(false, true)) listener.log("First AVC frame: bytes=" + data.length + ", ptsUs=" + pts);
+                listener.video(data, pts);
+            }
+        });
         byte[] bytes = new byte[65535];
         DatagramPacket packet = new DatagramPacket(bytes, bytes.length);
         try {
             InetAddress peer = InetAddress.getByName(host);
+            boolean firstPacket = true;
             while (!closed.get()) {
                 packet.setLength(bytes.length); rtp.receive(packet);
-                if (peer.equals(packet.getAddress())) parser.rtp(bytes, packet.getLength());
+                if (peer.equals(packet.getAddress())) {
+                    if (firstPacket && packet.getLength() >= 2) {
+                        firstPacket = false;
+                        listener.log("First RTP packet: bytes=" + packet.getLength() + ", payloadType=" + (bytes[1] & 127));
+                    }
+                    parser.rtp(bytes, packet.getLength());
+                }
             }
         } catch (IOException | RuntimeException error) {
             if (!closed.get()) finish("RTP: " + error.getMessage());
         }
+    }
+    private static DatagramSocket[] allocatePorts() throws IOException {
+        for (int port = 19000; port < 19100; port += 2) {
+            DatagramSocket media = null;
+            try {
+                media = new DatagramSocket(port);
+                return new DatagramSocket[]{media, new DatagramSocket(port + 1)};
+            } catch (SocketException error) { if (media != null) media.close(); }
+        }
+        throw new IOException("No free WFD RTP/RTCP port pair");
+    }
+    private void receiveReports() {
+        byte[] bytes = new byte[4096];
+        DatagramPacket report = new DatagramPacket(bytes, bytes.length);
+        int receiverSsrc = new Random().nextInt();
+        byte[] cname = "MiAuto-AVC".getBytes(StandardCharsets.US_ASCII);
+        int sdesSize = (4 + 4 + 2 + cname.length + 1 + 3) & ~3;
+        ByteBuffer reply = ByteBuffer.allocate(8 + sdesSize);
+        // Empty receiver report followed by SDES/CNAME. We do not fabricate
+        // packet-loss or jitter measurements in an unimplemented report block.
+        reply.put((byte)0x80).put((byte)201).putShort((short)1).putInt(receiverSsrc);
+        reply.put((byte)0x81).put((byte)202).putShort((short)(sdesSize / 4 - 1)).putInt(receiverSsrc);
+        reply.put((byte)1).put((byte)cname.length).put(cname);
+        try {
+            InetAddress peer = InetAddress.getByName(host);
+            while (!closed.get()) {
+                report.setLength(bytes.length); rtcp.receive(report);
+                int size = 4 * ((((bytes[2] & 255) << 8) | (bytes[3] & 255)) + 1);
+                if (peer.equals(report.getAddress()) && report.getLength() >= 28 && size <= report.getLength()
+                        && size >= 28 && (bytes[0] & 0xc0) == 0x80 && (bytes[1] & 255) == 200) {
+                    rtcp.send(new DatagramPacket(reply.array(), reply.capacity(), peer, report.getPort()));
+                }
+            }
+        } catch (IOException error) { if (!closed.get()) finish("RTCP: " + error.getMessage()); }
     }
     public synchronized boolean pause(boolean paused) {
         try { send(paused ? "PAUSE" : "PLAY", presentation, ""); return true; }
@@ -176,13 +229,17 @@ public final class RtspWfdSession implements AutoCloseable {
     public synchronized boolean input(byte[] data) {
         if (closed.get() || !ready || uibcPort < 1 || uibcPort > 65535 || data == null || data.length > 65535) return false;
         try {
-            if (uibc == null) { uibc = new Socket(); uibc.connect(new InetSocketAddress(host, uibcPort), 1500); }
+            if (uibc == null) {
+                uibc = new Socket();
+                if (closed.get()) { uibc.close(); return false; }
+                uibc.connect(new InetSocketAddress(host, uibcPort), 1500);
+            }
             uibc.getOutputStream().write(data); uibc.getOutputStream().flush(); return true;
         } catch (IOException error) { closeSocket(uibc); uibc = null; return false; }
     }
     @Override public void close() { finish("Closed by app"); }
     private void finish(String reason) {
-        if (closed.compareAndSet(false, true)) { rtp.close(); closeSocket(control); closeSocket(uibc); }
+        if (closed.compareAndSet(false, true)) { rtp.close(); rtcp.close(); closeSocket(control); closeSocket(uibc); }
         if (stopped.compareAndSet(false, true)) { listener.log(reason); listener.stopped(reason); }
     }
     private static void closeSocket(Socket socket) { if (socket != null) try { socket.close(); } catch (IOException ignored) { } }
