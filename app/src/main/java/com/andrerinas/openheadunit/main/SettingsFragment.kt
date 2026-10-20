@@ -26,6 +26,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.andrerinas.openheadunit.App
 import com.miauto.app.CarLinkTransport
+import com.miauto.app.CarLinkTransportUi
 import com.andrerinas.openheadunit.R
 import com.andrerinas.openheadunit.aap.AapService
 import com.andrerinas.openheadunit.aap.MediaKeyRoutingPolicy
@@ -605,15 +606,7 @@ class SettingsFragment : Fragment() {
                     return@setPositiveButton
                 }
                 if (mode == CarLinkTransport.get(requireContext())) return@setPositiveButton
-                val ctx = requireContext().applicationContext
-                if (!ctx.getSharedPreferences(CarLinkTransport.PREFERENCES, Context.MODE_PRIVATE)
-                        .edit().putString(CarLinkTransport.KEY, mode).commit()) return@setPositiveButton
-                App.provide(ctx).icocaBridge.stop()
-                AapService.killProcessOnDestroy = true
-                requireActivity().finishAffinity()
-                if (!ctx.stopService(Intent(ctx, AapService::class.java))) {
-                    android.os.Process.killProcess(android.os.Process.myPid())
-                }
+                CarLinkTransportUi.applyAndExit(requireActivity(), mode)
             }
             .show()
     }

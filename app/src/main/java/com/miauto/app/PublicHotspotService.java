@@ -23,12 +23,19 @@ public class PublicHotspotService extends Service {
     private Set<String> before = Collections.emptySet();
     private volatile boolean userClose;
     private long announced = -1;
+    private boolean probing;
     private final SdkWifiApBinder binder = new SdkWifiApBinder(new SdkWifiApBinder.Commands() {
         @Override public void open() { main.post(() -> { userClose = false; binder.notifyEvent(1); }); }
         @Override public void close() { main.post(() -> stopHotspot()); }
         @Override public void create(int channel, String ssid, String password, boolean coexist, boolean prefix) {
             // Public LOHS generates its own credentials and chooses the radio band.
-            main.post(() -> startHotspot());
+            main.post(() -> {
+                if (probing) {
+                    probeCleanup.removeCallbacksAndMessages(null);
+                    stopHotspot();
+                }
+                startHotspot();
+            });
         }
         @Override public boolean isUserClose() { return userClose; }
     });
@@ -44,13 +51,14 @@ public class PublicHotspotService extends Service {
             @Override public void failed(int reason) {
                 main.removeCallbacksAndMessages(null);
                 Log.w(TAG, "LocalOnlyHotspot failed, reason=" + reason);
-                binder.notifyEvent(4);
+                if (!probing) binder.notifyEvent(4);
             }
             @Override public void stopped() {
                 userClose = true;
+                announced = -1;
                 main.removeCallbacksAndMessages(null);
                 Log.i(TAG, "LocalOnlyHotspot stopped by platform");
-                binder.notifyEvent(6, data -> data.writeInt(1));
+                if (!probing) binder.notifyEvent(6, data -> data.writeInt(1));
             }
         });
         Log.i(TAG, "Public LocalOnlyHotspot backend created");
@@ -108,6 +116,7 @@ public class PublicHotspotService extends Service {
         Log.i(TAG, "LocalOnlyHotspot ready, address=" + network.address + ", generated credentials available");
         // SDK v1.5.3 order is IP, SSID, password, MAC, frequency. Empty MAC and
         // zero frequency mean unknown: never substitute the station's BSSID/IP.
+        if (probing) return; // Do not signal a fictitious SDK session during a platform smoke test.
         binder.created(network.address, ssid, password, network.mac, 0);
         // This signals transport readiness, not successful phone authentication.
         // The SDK's auth server (started by onApCreated) owns the phone session.
@@ -116,6 +125,7 @@ public class PublicHotspotService extends Service {
 
     private void stopHotspot() {
         userClose = false;
+        probing = false;
         main.removeCallbacksAndMessages(null);
         if (session != null) session.stop();
         announced = -1;
@@ -136,6 +146,12 @@ public class PublicHotspotService extends Service {
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (BuildConfig.DEBUG && intent != null &&
                 (getPackageName() + ".PROBE_PUBLIC_HOTSPOT").equals(intent.getAction())) {
+            if (session.isActive(session.generation())) {
+                Log.i(TAG, "Probe skipped: a hotspot request is already active");
+                stopSelf(startId);
+                return START_NOT_STICKY;
+            }
+            probing = true;
             startHotspot();
             // Bounded device smoke test; cleanup remains local if wireless ADB drops.
             probeCleanup.postDelayed(() -> { stopHotspot(); stopSelf(startId); }, 10000);

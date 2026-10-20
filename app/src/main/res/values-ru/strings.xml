@@ -1029,4 +1029,8 @@
     <string name="carlink_transport_apply_exit">Сохранить и выйти</string>
     <string name="carlink_transport_not_supported">Локальная точка доступа требует Android 9 или новее.</string>
     <string name="carlink_transport_save_first">Сначала сохраните или отмените остальные изменения настроек.</string>
+    <string name="carlink_transport_auto_hint">Сохраняет существующий способ подключения устройства.</string>
+    <string name="carlink_transport_p2p_hint">Прямое соединение телефона и головного устройства без маршрутизатора.</string>
+    <string name="carlink_transport_hotspot_hint">Система создаёт локальную сеть Wi-Fi и выбирает имя, пароль и диапазон. Сеть служит для проекции и не раздаёт Интернет.</string>
+    <string name="carlink_pair_instructions">Включите Bluetooth и Wi-Fi. Откройте CarWith, Car+ или Jovi InCar, выберите MiAutoCar и введите код с экрана головного устройства.</string>
 </resources>

@@ -1038,4 +1038,8 @@
     <string name="carlink_transport_apply_exit">Guardar y salir</string>
     <string name="carlink_transport_not_supported">El punto de acceso local requiere Android 9 o posterior.</string>
     <string name="carlink_transport_save_first">Guarda o descarta los otros ajustes pendientes antes de cambiar la conexión.</string>
+    <string name="carlink_transport_auto_hint">Mantiene la política de conexión existente del dispositivo.</string>
+    <string name="carlink_transport_p2p_hint">Conecta directamente el teléfono y la unidad sin un router.</string>
+    <string name="carlink_transport_hotspot_hint">El sistema crea una red Wi-Fi local y elige su nombre, contraseña y banda. Sirve para proyectar y no comparte Internet.</string>
+    <string name="carlink_pair_instructions">Mantén Bluetooth y Wi-Fi activos. Abre CarWith, Car+ o Jovi InCar, selecciona MiAutoCar e introduce el código de la unidad.</string>
 </resources>
