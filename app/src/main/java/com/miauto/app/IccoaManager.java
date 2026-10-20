@@ -37,7 +37,7 @@ public class IccoaManager {
     /** 事件回调。由 UI / 导航桥接实现。 */
     public interface Listener {
         void onLog(String msg);
-        /** 已连接状态变化：0 断开 / 1 连接中 / 2 已连接 / 3 已建立 */
+        /** ICCOA UCarConnectState event; the SDK callback's third argument is not a state. */
         void onConnectionState(int state);
         void onPinCode(String pinCode, String carDeviceName);
         void onCastStarted();
@@ -72,7 +72,7 @@ public class IccoaManager {
      * 弹出配对界面。用户一旦关掉那个弹窗，之后就必须手动去 CarWith 里找车机才能重连。
      * 荣耀车联 / HiCar 的车机端做法是周期性重播，本常量即那个周期。
      */
-    private static final long AUTO_REFRESH_INTERVAL_MS = 30_000L;
+    private static final long AUTO_REFRESH_INTERVAL_MS = 5 * 60_000L;
 
     /** 会话是否正在进行（手机连接中或已连接）。由连接回调维护，看门狗据此避让。 */
     private volatile boolean sessionActive = false;
@@ -104,7 +104,7 @@ public class IccoaManager {
      *
      * <p>避让规则：手机正在连接或已连上（{@link #sessionActive}）、或画面已经投出去
      * （{@code castStarted}）时一律跳过，绝不打断进行中的会话。新码下发时计时会重置，
-     * 保证用户拿到完整的 30 秒去输入。
+     * 给用户留出完整的配对窗口。
      */
     private final Runnable autoRefreshRunnable = () -> {
         if (!sdkReady || adapter == null) return;
@@ -327,30 +327,33 @@ public class IccoaManager {
         }
 
         @Override
-        public void onConnectStateChanged(String deviceID, int oldState, int newState) {
-            log("onConnectStateChanged " + stateName(oldState) + " -> " + stateName(newState));
-            if (newState == 0 && oldState != 0) {
-                // 会话真正结束（不是启动时的初始 DISCONNECTED）。清掉已过期的配对码并延时重新
-                // 广播：手机端 CarWith 会重新发现车机并触发一次全新配对（新的 onPinCode）。
+        public void onConnectStateChanged(String deviceID, int state, int parameter) {
+            // SDK contract: (deviceID, state, parameter). For CONNECT_FAILED,
+            // parameter is an error code such as 10008, not a new state.
+            log("onConnectStateChanged state=" + stateName(state) + " parameter=" + parameter);
+            if (IccoaConnectionPolicy.isTerminalState(state)) {
                 sessionActive = false;
                 lastPinCode = null;
                 castStarted = false;
                 scheduleReAdvertise();
                 scheduleAutoRefresh();
-            } else if (newState == 2 || newState == 3) {
-                // 已连上：撤销任何待执行的重新广播，免得刚连上就被重启广播打断；看门狗也会因此空转。
+            } else if (IccoaConnectionPolicy.isConnectedState(state)) {
                 sessionActive = true;
                 main.removeCallbacks(reAdvertiseRunnable);
+                cancelAutoRefresh();
             }
-            // newState == 1（CONNECTING）刻意不置 sessionActive：若协商卡死超过一个刷新周期，
-            // 看门狗需要能重播把它救回来。正常协商只需数秒，30 秒的余量足够。
-            final int st = newState;
-            main.post(() -> listener.onConnectionState(st));
+            main.post(() -> listener.onConnectionState(state));
         }
 
         @Override
         public void onConnectingProgress(String phoneId, int progress) {
             log("onConnectingProgress " + progress);
+            if (progress > 0) {
+                // Do not tear down BLE or change the PIN while Wi-Fi is negotiating.
+                sessionActive = true;
+                main.removeCallbacks(reAdvertiseRunnable);
+                cancelAutoRefresh();
+            }
         }
 
         @Override
@@ -435,6 +438,11 @@ public class IccoaManager {
                 .setSupportAppWindowCast(false)
                 .build();
 
+        String transport = CarLinkTransport.get(appCtx);
+        boolean p2p = CarLinkTransport.supportsP2p(transport);
+        boolean softAp = CarLinkTransport.supportsAp(transport, android.os.Build.VERSION.SDK_INT);
+        log("wireless transports: mode=" + transport + " P2P=" + p2p + " SoftAP=" + softAp +
+                " api=" + android.os.Build.VERSION.SDK_INT);
         return new UCarConfig.Builder()
                 .setCarBrMac(carId)                  // 必须恰好 6 字节
                 .setDpi(dpi)                         // 120..640
@@ -444,8 +452,8 @@ public class IccoaManager {
                 .setScreenHeight(sh)
                 .setVideoDisplayWidth(vw)
                 .setVideoDisplayHeight(vh)
-                .setSupportP2P(true)
-                .setSupportSoftAP(true)
+                .setSupportP2P(p2p)
+                .setSupportSoftAP(softAp)
                 .setSupportCamera(false)
                 .setSupportHevc(false)
                 .setSupportMic(true)
@@ -516,10 +524,13 @@ public class IccoaManager {
 
     private static String stateName(int s) {
         switch (s) {
-            case 0: return "DISCONNECTED";
-            case 1: return "CONNECTING";
+            case 1: return "DISCONNECTED";
             case 2: return "CONNECTED";
-            case 3: return "ESTABLISHED";
+            case 3: return "CONNECT_FAILED";
+            case 4: return "CAST_CONNECTED";
+            case 5: return "CAST_DISCONNECTED";
+            case 6: return "GO_TO_HOME";
+            case 7: return "BACK_TO_FOREGROUND";
             default: return "STATE_" + s;
         }
     }

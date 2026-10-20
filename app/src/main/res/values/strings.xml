@@ -1080,4 +1080,16 @@
     <string name="cluster_map_trigger_always">Always</string>
     <string name="cluster_map_trigger_cruise">Cruise + nav</string>
     <string name="cluster_map_trigger_navigation">Nav only</string>
+    <string name="carlink_transport_title">CarWith connection</string>
+    <string name="carlink_transport_auto">Automatic</string>
+    <string name="carlink_transport_p2p">Wi-Fi Direct</string>
+    <string name="carlink_transport_hotspot">Local hotspot (backup)</string>
+    <string name="carlink_transport_restart_hint">Reopen MiAuto after switching</string>
+    <string name="carlink_transport_apply_exit">Save and exit</string>
+    <string name="carlink_transport_not_supported">Local hotspot mode requires Android 9 or later.</string>
+    <string name="carlink_transport_save_first">Save or discard other pending settings before changing the connection method.</string>
+    <string name="carlink_transport_auto_hint">Keeps the existing connection policy for this device.</string>
+    <string name="carlink_transport_p2p_hint">Connects the phone directly to the head unit without a router.</string>
+    <string name="carlink_transport_hotspot_hint">The system creates a local Wi-Fi network and chooses its name, password and band. It is for projection and does not share Internet access.</string>
+    <string name="carlink_pair_instructions">Keep Bluetooth and Wi-Fi on. Open CarWith, Car+ or Jovi InCar on the phone, select MiAutoCar and enter the code shown on the head unit.</string>
 </resources>

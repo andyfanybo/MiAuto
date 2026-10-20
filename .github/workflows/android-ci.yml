@@ -75,8 +75,14 @@ jobs:
       # github flavor only: the playstore flavor is not covered by this repository's CI.
       # The release variant is compiled here as an R8 / resource-shrinking check; it is
       # left unsigned because key.properties is not in the repository.
+      - name: Test ICCOA USB JNI contract
+        run: bash scripts/test_usbio.sh
+
       - name: Assemble github debug and release
         run: ./gradlew :app:assembleGithubDebug :app:assembleGithubRelease --stacktrace
+
+      - name: Verify ICCOA native libraries in APKs
+        run: python3 scripts/check_apk_native_libs.py app/build/outputs/apk/github/{debug,release}/*.apk
 
       - name: Upload debug APK
         if: always()

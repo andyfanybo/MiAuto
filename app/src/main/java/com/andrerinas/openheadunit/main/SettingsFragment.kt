@@ -25,6 +25,8 @@ import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.andrerinas.openheadunit.App
+import com.miauto.app.CarLinkTransport
+import com.miauto.app.CarLinkTransportUi
 import com.andrerinas.openheadunit.R
 import com.andrerinas.openheadunit.aap.AapService
 import com.andrerinas.openheadunit.aap.MediaKeyRoutingPolicy
@@ -78,7 +80,7 @@ class SettingsFragment : Fragment() {
     private val basicSettingIds = setOf(
         "staticBSSID", "appLanguage", "autoStartSettings", "autoConnectSettings", "resolution",
         "dpiPixelDensity", "viewMode", "fpsLimit", "musicViaBluetooth", "enableAudioSink", "micSettings", "audioVolumeOffsets",
-        "keymap", "version", "about"
+        "keymap", "version", "about", "carLinkTransport"
     )
 
     // Local state to hold changes before saving
@@ -584,6 +586,31 @@ class SettingsFragment : Fragment() {
         }
     }
 
+    private fun showCarLinkTransportDialog() {
+        if (hasChanges) {
+            Toast.makeText(requireContext(), R.string.carlink_transport_save_first, Toast.LENGTH_LONG).show()
+            return
+        }
+        val modes = arrayOf(CarLinkTransport.AUTO, CarLinkTransport.P2P, CarLinkTransport.LOCAL_HOTSPOT)
+        val labels = arrayOf(getString(R.string.carlink_transport_auto),
+            getString(R.string.carlink_transport_p2p), getString(R.string.carlink_transport_hotspot))
+        var selected = modes.indexOf(CarLinkTransport.get(requireContext())).coerceAtLeast(0)
+        MaterialAlertDialogBuilder(requireContext(), R.style.DarkAlertDialog)
+            .setTitle(R.string.carlink_transport_title)
+            .setSingleChoiceItems(labels, selected) { _, which -> selected = which }
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.carlink_transport_apply_exit) { _, _ ->
+                val mode = modes[selected]
+                if (mode == CarLinkTransport.LOCAL_HOTSPOT && Build.VERSION.SDK_INT < 28) {
+                    Toast.makeText(requireContext(), R.string.carlink_transport_not_supported, Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
+                if (mode == CarLinkTransport.get(requireContext())) return@setPositiveButton
+                CarLinkTransportUi.applyAndExit(requireActivity(), mode)
+            }
+            .show()
+    }
+
     private fun checkChanges() {
         // Check for any changes
         val anyChange = pendingUseGps != settings.useGpsForNavigation ||
@@ -720,6 +747,24 @@ class SettingsFragment : Fragment() {
             value = connectionModesLabel(),
             onClick = { showConnectionModeDialog() }
         ))
+
+        if (BuildConfig.ICCOA_ONLY) {
+            val transport = CarLinkTransport.get(requireContext())
+            val names = mapOf(
+                CarLinkTransport.AUTO to R.string.carlink_transport_auto,
+                CarLinkTransport.P2P to R.string.carlink_transport_p2p,
+                CarLinkTransport.LOCAL_HOTSPOT to R.string.carlink_transport_hotspot
+            )
+            items.add(SettingItem.SettingEntry(
+                stableId = "carLinkTransport",
+                nameResId = R.string.carlink_transport_title,
+                value = getString(names[transport] ?: R.string.carlink_transport_auto) +
+                    " · " + getString(R.string.carlink_transport_restart_hint),
+                searchKeywords = getString(R.string.carlink_transport_hotspot) + " " +
+                    getString(R.string.carlink_transport_p2p),
+                onClick = { showCarLinkTransportDialog() }
+            ))
+        }
 
         // Language Selector
         val availableLocales = LocaleHelper.getAvailableLocales(requireContext())

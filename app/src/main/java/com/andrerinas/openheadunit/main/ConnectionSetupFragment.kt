@@ -13,6 +13,9 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.navigation.fragment.findNavController
 import com.andrerinas.openheadunit.R
+import com.andrerinas.openheadunit.BuildConfig
+import com.miauto.app.CarLinkTransport
+import com.miauto.app.CarLinkTransportUi
 import com.andrerinas.openheadunit.utils.AppPermissions
 import com.andrerinas.openheadunit.utils.Settings
 import com.google.android.material.appbar.MaterialToolbar
@@ -59,6 +62,11 @@ class ConnectionSetupFragment : Fragment() {
             setNavigationIcon(R.drawable.ic_arrow_back_white)
             setNavigationOnClickListener { findNavController().popBackStack() }
         })
+        if (BuildConfig.ICCOA_ONLY) {
+            renderCarLink(root)
+            scroll?.post { scroll.scrollTo(0, previousScroll) }
+            return
+        }
         text(root, getString(R.string.setup_intro), 28)
         text(root, getString(R.string.setup_saved_details_hint), 16)
         card(root, getString(R.string.setup_choose_connection)) { box ->
@@ -129,6 +137,40 @@ class ConnectionSetupFragment : Fragment() {
             text(box, getString(R.string.setup_usb_instructions), 16)
         }
         scroll?.post { scroll.scrollTo(0, previousScroll) }
+    }
+
+    private fun renderCarLink(root: LinearLayout) {
+        text(root, getString(R.string.carlink_transport_title), 28)
+        text(root, getString(R.string.carlink_pair_instructions), 16)
+        val selected = CarLinkTransport.get(requireContext())
+        card(root, getString(R.string.setup_choose_connection)) { box ->
+            val modes = listOf(
+                CarLinkTransport.AUTO to R.string.carlink_transport_auto_hint,
+                CarLinkTransport.P2P to R.string.carlink_transport_p2p_hint,
+                CarLinkTransport.LOCAL_HOTSPOT to R.string.carlink_transport_hotspot_hint
+            )
+            for ((mode, hint) in modes) {
+                val title = getString(CarLinkTransportUi.title(mode))
+                button(box, if (selected == mode) "✓  $title" else title, selected == mode) {
+                    if (mode == selected) return@button
+                    MaterialAlertDialogBuilder(requireContext(), R.style.DarkAlertDialog)
+                        .setTitle(title)
+                        .setMessage(getString(hint) + "\n\n" + getString(R.string.carlink_transport_restart_hint))
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .setPositiveButton(R.string.carlink_transport_apply_exit) { _, _ ->
+                            CarLinkTransportUi.applyAndExit(requireActivity(), mode)
+                        }.show()
+                }.isEnabled = mode != CarLinkTransport.LOCAL_HOTSPOT || android.os.Build.VERSION.SDK_INT >= 28
+                text(box, getString(hint), 16)
+            }
+        }
+        card(root, getString(R.string.setup_pair_and_connect)) { box ->
+            text(box, getString(R.string.carlink_pair_instructions), 16)
+            button(box, getString(R.string.setup_review_app_permissions)) {
+                findNavController().navigate(R.id.permissionsFragment)
+            }
+            button(box, getString(R.string.setup_done_return_to_diauto)) { requireActivity().finish() }
+        }
     }
 
     private fun selectMode(mode: Int) {
