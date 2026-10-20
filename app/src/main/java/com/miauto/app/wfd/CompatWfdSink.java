@@ -10,7 +10,11 @@ public final class CompatWfdSink {
     private CompatWfdSink() { }
     public static synchronized boolean start(String host, int port, int width, int height,
             int dpi, int fps, boolean hevc, boolean fusion, boolean rawPackets) {
-        if (hevc || fusion || rawPackets) { log("Unsupported mode; this compatibility backend supports plain AVC only"); return false; }
+        log("Start: hevc=" + hevc + ", fusion=" + fusion + ", rawCapability=" + rawPackets);
+        if (hevc || fusion) { log("Unsupported mode; this compatibility backend supports plain AVC only"); return false; }
+        // This argument advertises an optional SDK capability, not a required
+        // packet format. Our RTSP capabilities explicitly negotiate MP2T/AVC.
+        if (rawPackets) log("Declining optional raw AV packets; negotiating MPEG-TS AVC");
         stop(null);
         try {
             final RtspWfdSession[] owner = new RtspWfdSession[1];

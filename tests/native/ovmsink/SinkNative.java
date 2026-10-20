@@ -30,7 +30,7 @@ public final class SinkNative {
         check(!onUibcEvent("missing",new byte[1]),"input nonexistent session");
         try(ServerSocket source = new ServerSocket(0)) {
             source.setSoTimeout(2000);
-            check(start("127.0.0.1",source.getLocalPort(),1280,720,160,30,false,false,false),"start AVC receiver");
+            check(start("127.0.0.1",source.getLocalPort(),1280,720,160,30,false,false,true),"SDK raw capability must still allow MP2T AVC negotiation");
             try(Socket peer=source.accept()) {
                 check(!stop("wrong-session"),"stop must preserve another session");
                 check(stop("127.0.0.1:"+source.getLocalPort()),"close owned session");

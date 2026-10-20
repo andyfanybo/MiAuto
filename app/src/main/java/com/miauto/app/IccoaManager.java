@@ -443,6 +443,12 @@ public class IccoaManager {
         boolean softAp = CarLinkTransport.supportsAp(transport, android.os.Build.VERSION.SDK_INT);
         log("wireless transports: mode=" + transport + " P2P=" + p2p + " SoftAP=" + softAp +
                 " api=" + android.os.Build.VERSION.SDK_INT);
+        boolean armv7Compat = "armeabi-v7a".equals(android.os.Build.CPU_ABI);
+        if (android.os.Build.VERSION.SDK_INT >= 23) {
+            armv7Compat = !android.os.Process.is64Bit() && java.util.Arrays.asList(
+                    android.os.Build.SUPPORTED_ABIS).contains("armeabi-v7a");
+        }
+        log("WFD transport: raw AV packets=" + !armv7Compat);
         return new UCarConfig.Builder()
                 .setCarBrMac(carId)                  // 必须恰好 6 字节
                 .setDpi(dpi)                         // 120..640
@@ -456,6 +462,7 @@ public class IccoaManager {
                 .setSupportSoftAP(softAp)
                 .setSupportCamera(false)
                 .setSupportHevc(false)
+                .setSupportAvRawPacket(!armv7Compat)
                 .setSupportMic(true)
                 .setUseCustomAudioRecord(false)
                 .setSupportStereoRecord(false)
