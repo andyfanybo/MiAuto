@@ -24,6 +24,7 @@ public class PublicHotspotService extends Service {
     private volatile boolean userClose;
     private long announced = -1;
     private boolean probing;
+    private WifiManager wifi;
     private final SdkWifiApBinder binder = new SdkWifiApBinder(new SdkWifiApBinder.Commands() {
         @Override public void open() { main.post(() -> { userClose = false; binder.notifyEvent(1); }); }
         @Override public void close() { main.post(() -> stopHotspot()); }
@@ -42,7 +43,7 @@ public class PublicHotspotService extends Service {
 
     @Override public void onCreate() {
         super.onCreate();
-        WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+        wifi = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
         session = new HotspotSession(callback -> request(wifi, callback), new HotspotSession.Listener() {
             @Override public void ready(String ssid, String password) {
                 final long token = session.generation();
@@ -113,11 +114,22 @@ public class PublicHotspotService extends Service {
             return;
         }
         announced = token;
-        Log.i(TAG, "LocalOnlyHotspot ready, address=" + network.address + ", generated credentials available");
+        int frequency = 0;
+        try {
+            android.net.wifi.WifiInfo station = wifi == null ? null : wifi.getConnectionInfo();
+            if (station != null) frequency = HotspotNetworkInfo.coexistFrequency(
+                    android.os.Build.HARDWARE, android.os.Build.VERSION.SDK_INT,
+                    station.getNetworkId(), station.getFrequency());
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Station frequency unavailable", error);
+        }
+        Log.i(TAG, "LocalOnlyHotspot ready, address=" + network.address + ", frequency=" + frequency
+                + ", generated credentials available");
         // SDK v1.5.3 order is IP, SSID, password, MAC, frequency. Empty MAC and
-        // zero frequency mean unknown: never substitute the station's BSSID/IP.
+        // zero frequency mean unknown. MT8167/Android 9 STA+SAP shares the station
+        // channel; other platforms keep unknown. Never substitute station BSSID/IP.
         if (probing) return; // Do not signal a fictitious SDK session during a platform smoke test.
-        binder.created(network.address, ssid, password, network.mac, 0);
+        binder.created(network.address, ssid, password, network.mac, frequency);
         // This signals transport readiness, not successful phone authentication.
         // The SDK's auth server (started by onApCreated) owns the phone session.
         binder.notifyEvent(5);
