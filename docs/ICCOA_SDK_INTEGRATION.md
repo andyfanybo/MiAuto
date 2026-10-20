@@ -101,3 +101,18 @@ CMake 现在对缺少厂商预编译库的 ABI 构建 `usbio_compat.c`，提供 
 
 这项修复解决 USB 库加载导致的闪退。其他 ABI 的 `libovmsink.so`（Miracast）和软件
 HEVC 支持仍取决于实际提供的库；它也不会改变 ICCOA 的系统权限要求。
+
+## 7. Android 9 无线连接兼容
+
+设备端以应用 UID 实测：公开 `WifiP2pManager.initialize()` 和经典 `createGroup()`
+可以成功建组、取得连接参数并清理；而旧热点路径所调用的 `getCountryCode()` 被
+`CONNECTIVITY_INTERNAL` 拒绝。Android 9 因此只声明支持 P2P，让 SDK 现有的
+`phone expect ap connection, but car only supports p2p connection` 分支负责协商。
+这不代表已经验证 CarWith 端到端投屏，仍需真机连接测试。
+
+SDK 回调是 `onConnectStateChanged(deviceID, state, parameter)`：1 为断开、2 为连接、
+3 为连接失败、4 为投屏已连接；失败时 parameter 是 10003/10008 等错误码。
+适配层必须传递 state，不能将这两个整数当成 oldState/newState。
+
+未连接的重播间隔延长至 5 分钟；收到连接进度后取消重播，防止协商过程中关闭 BLE、
+更换配对码。SDK 报告断开或连接失败后恢复重播，手动刷新按钮仍可立即重试。

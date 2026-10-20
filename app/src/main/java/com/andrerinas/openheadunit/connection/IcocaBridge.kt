@@ -4,6 +4,7 @@ import android.content.Context
 import android.view.Surface
 import com.andrerinas.openheadunit.utils.AppLog
 import com.miauto.app.IccoaManager
+import com.miauto.app.IccoaConnectionPolicy
 import com.ucar.vehiclesdk.UCarCommon
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -130,11 +131,10 @@ class IcocaBridge(context: Context) : IccoaManager.Listener {
     }
 
     override fun onConnectionState(stateCode: Int) {
-        val phase = when (stateCode) {
-            0 -> Phase.Advertising
-            1, 2 -> Phase.Pairing
-            3 -> Phase.Connected
-            else -> Phase.Advertising
+        val phase = when {
+            IccoaConnectionPolicy.isTerminalState(stateCode) -> Phase.Advertising
+            IccoaConnectionPolicy.isConnectedState(stateCode) -> Phase.Connected
+            else -> _state.value.phase
         }
         AppLog.i("ICCOA: connection state $stateCode -> $phase")
         updatePhase(phase)
