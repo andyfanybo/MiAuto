@@ -30,3 +30,22 @@ CI also rejects APKs without the expected ARM32/ARM64 sink ELF architecture.
 
 Device projection validation is pending. Passing JNI or negotiation tests does
 not establish working video, audio, input, reconnect, or long-session stability.
+
+## SDK generated resource relocation
+
+The extracted v1.5.3 SDK reads `com.ucar.sdk.R.drawable.ucar` with its donor APK's
+numeric resource ID. In this APK that ID resolves to a non-bitmap resource.
+`BitmapUtil.decodeResource` returns null and then crashes inside `compress`.
+Although the observer catches the exception, the rest of `receivedClientHello`
+is skipped, including updating the phone protocol version from 1 to 1793.
+A live debugger test confirmed that binding the existing bitmap launcher
+foreground removes this exception and restores the correct protocol version.
+It did not by itself resolve the remaining no-video/heartbeat-timeout symptom.
+
+`rebind_iccoa_resources.py` changes only that generated four-byte integer and the
+DEX signature/checksum, using the current variant's AGP R.txt. It leaves all SDK
+instructions, size and the original private file unchanged. Injection normalizes
+this field/checksum when deduplicating previous SDK copies. Six independent
+fixture/CLI tests check relocation, checksum integrity, idempotence, malformed
+input rejection and preservation of the original SDK. The resulting SDK binary
+remains private and is not committed to the repository.
