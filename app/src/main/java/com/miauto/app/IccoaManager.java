@@ -345,7 +345,10 @@ public class IccoaManager {
                 scheduleAutoRefresh();
             } else if (IccoaConnectionPolicy.isConnectedState(state)) {
                 sessionActive = true;
-                videoReady = IccoaConnectionPolicy.isVideoReadyState(state);
+                // Sticky: the SDK sends CAST_CONNECTED (4) *before* CONNECTED (2),
+                // so a later CONNECTED event must not discard the video readiness
+                // that the Surface needs to call startCast().
+                videoReady = IccoaConnectionPolicy.videoReadyAfter(videoReady, state);
                 main.removeCallbacks(reAdvertiseRunnable);
                 cancelAutoRefresh();
             } else if (state == IccoaConnectionPolicy.CAST_DISCONNECTED) {
@@ -353,7 +356,7 @@ public class IccoaManager {
                 castStarted = false;
             }
             main.post(() -> listener.onConnectionState(state));
-            if (IccoaConnectionPolicy.isVideoReadyState(state)) main.post(IccoaManager.this::tryStartCast);
+            if (videoReady) main.post(IccoaManager.this::tryStartCast);
         }
 
         @Override

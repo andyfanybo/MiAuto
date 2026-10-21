@@ -32,4 +32,20 @@ public final class IccoaConnectionPolicy {
     public static boolean isVideoReadyState(int state) {
         return state == CAST_CONNECTED;
     }
+
+    /**
+     * Video readiness is sticky for the lifetime of a cast.
+     *
+     * <p>The SDK emits {@code CAST_CONNECTED (4)} as soon as the first access unit
+     * arrives, then a {@code CONNECTED (2)} "session established" event a moment
+     * later. Assigning {@code videoReady = state == 4} cleared the flag on that
+     * second event, so the projection activity's Surface never started a decoder:
+     * the phone kept streaming and the video queue grew, but the screen stayed
+     * black. Only teardown/failure events clear readiness.
+     */
+    public static boolean videoReadyAfter(boolean current, int state) {
+        if (state == CAST_CONNECTED) return true;
+        if (isTerminalState(state) || state == CAST_DISCONNECTED) return false;
+        return current;
+    }
 }
