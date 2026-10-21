@@ -121,6 +121,14 @@ class IcocaBridge(context: Context) : IccoaManager.Listener {
     /** The projection Surface is gone; pause the decoder before it writes to a dead BufferQueue. */
     fun onSurfaceDestroyed() = manager.onSurfaceDestroyed()
 
+    /** Coordinates are display pixels; the SDK maps them to the phone's stream size. */
+    fun sendTouch(action: Int, count: Int, ids: IntArray, xs: IntArray, ys: IntArray): Boolean =
+        manager.sendTouchEvent(action, count, ids, xs, ys)
+
+    val displayWidth: Int get() = manager.displayWidth
+
+    val displayHeight: Int get() = manager.displayHeight
+
     /** Last PIN the SDK issued, or null. Useful when the projection activity opens late. */
     fun lastPinCode(): String? = manager.lastPinCode
 

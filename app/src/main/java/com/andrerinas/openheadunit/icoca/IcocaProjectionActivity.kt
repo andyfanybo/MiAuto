@@ -40,7 +40,30 @@ class IcocaProjectionActivity : AppCompatActivity() {
         hideSystemUi()
 
         val bridge = App.provide(this).icocaBridge
-        findViewById<SurfaceView>(R.id.icoca_surface).holder.addCallback(
+        val surfaceView = findViewById<SurfaceView>(R.id.icoca_surface)
+        // Forward every touch on the mirrored picture to the phone's UIBC server.
+        // The SDK wants display-space pixels and the raw MotionEvent action.
+        surfaceView.setOnTouchListener { view, event ->
+            val viewWidth = view.width
+            val viewHeight = view.height
+            if (viewWidth <= 0 || viewHeight <= 0) return@setOnTouchListener false
+            val displayWidth = bridge.displayWidth.coerceAtLeast(1)
+            val displayHeight = bridge.displayHeight.coerceAtLeast(1)
+            val count = event.pointerCount
+            val ids = IntArray(count)
+            val xs = IntArray(count)
+            val ys = IntArray(count)
+            for (i in 0 until count) {
+                ids[i] = event.getPointerId(i)
+                xs[i] = (event.getX(i) * displayWidth / viewWidth).toInt()
+                    .coerceIn(0, displayWidth - 1)
+                ys[i] = (event.getY(i) * displayHeight / viewHeight).toInt()
+                    .coerceIn(0, displayHeight - 1)
+            }
+            bridge.sendTouch(event.action, count, ids, xs, ys)
+            true
+        }
+        surfaceView.holder.addCallback(
             object : SurfaceHolder.Callback {
                 override fun surfaceCreated(holder: SurfaceHolder) {
                     AppLog.i("ICCOA projection: surfaceCreated")

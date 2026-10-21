@@ -142,6 +142,32 @@ public class IccoaManager {
 
     public String getLastPinCode() { return lastPinCode; }
 
+    public int getDisplayWidth() { return videoW; }
+
+    public int getDisplayHeight() { return videoH; }
+
+    /**
+     * Forwards one Android MotionEvent to the phone's UIBC server.
+     *
+     * <p>The SDK expects the raw {@code MotionEvent.getAction()} value, one entry
+     * per pointer, and coordinates in the display space declared by
+     * {@code startCast(surface, width, height)}. It maps them to the stream's
+     * source size and writes the UIBC payload through {@code SinkNative.onUibcEvent}.
+     */
+    public boolean sendTouchEvent(int action, int count, int[] trackIds, int[] xs, int[] ys) {
+        if (adapter == null || !videoReady || count <= 0
+                || trackIds == null || xs == null || ys == null
+                || trackIds.length != count || xs.length != count || ys.length != count) {
+            return false;
+        }
+        try {
+            return adapter.sendTouchEvent(action, count, trackIds, xs, ys);
+        } catch (Throwable t) {
+            log("sendTouchEvent 异常: " + t);
+            return false;
+        }
+    }
+
     /** Surface 就绪 / 变化（Activity 的 surfaceChanged 回调里调用）。 */
     public void setSurface(Surface s) {
         Surface previous = surface;
