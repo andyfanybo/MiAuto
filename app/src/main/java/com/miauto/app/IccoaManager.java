@@ -18,6 +18,11 @@ import com.ucar.vehiclesdk.UCarConfig;
 
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * MiAuto 车机端 ICCOA CarLink（小米 CarWith）SDK 生命周期管理器。
@@ -51,6 +56,22 @@ public class IccoaManager {
 
     private UCarAdapter adapter = null;
     private Surface surface = null;
+
+    /**
+     * UIBC touch writes are blocking socket I/O inside the SDK. Sending them on
+     * the main thread throws NetworkOnMainThreadException and drops the event, so
+     * a single ordered worker owns the socket; the queue is bounded and drops the
+     * oldest move when the phone cannot keep up.
+     */
+    private final ExecutorService touchExecutor = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<Runnable>(128),
+            runnable -> {
+                Thread thread = new Thread(runnable, "MiAuto-UIBC");
+                thread.setDaemon(true);
+                return thread;
+            },
+            new ThreadPoolExecutor.DiscardOldestPolicy());
 
     /** {@link #tryStartCast()} 的重试预算（×500ms = 最长 10 秒）。 */
     private static final int CAST_RETRY_MAX = 20;
@@ -160,10 +181,19 @@ public class IccoaManager {
                 || trackIds.length != count || xs.length != count || ys.length != count) {
             return false;
         }
+        final UCarAdapter sink = adapter;
         try {
-            return adapter.sendTouchEvent(action, count, trackIds, xs, ys);
-        } catch (Throwable t) {
-            log("sendTouchEvent 异常: " + t);
+            touchExecutor.execute(() -> {
+                try {
+                    if (!sink.sendTouchEvent(action, count, trackIds, xs, ys)) {
+                        log("sendTouchEvent 未发送（SDK 返回 false）");
+                    }
+                } catch (Throwable t) {
+                    log("sendTouchEvent 后台异常: " + t);
+                }
+            });
+            return true;
+        } catch (RejectedExecutionException error) {
             return false;
         }
     }
