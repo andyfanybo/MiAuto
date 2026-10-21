@@ -118,6 +118,9 @@ class IcocaBridge(context: Context) : IccoaManager.Listener {
      */
     fun setSurface(surface: Surface) = manager.setSurface(surface)
 
+    /** The projection Surface is gone; pause the decoder before it writes to a dead BufferQueue. */
+    fun onSurfaceDestroyed() = manager.onSurfaceDestroyed()
+
     /** Last PIN the SDK issued, or null. Useful when the projection activity opens late. */
     fun lastPinCode(): String? = manager.lastPinCode
 

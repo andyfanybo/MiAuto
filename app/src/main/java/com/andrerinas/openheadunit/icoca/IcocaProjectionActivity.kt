@@ -56,6 +56,10 @@ class IcocaProjectionActivity : AppCompatActivity() {
 
                 override fun surfaceDestroyed(holder: SurfaceHolder) {
                     AppLog.i("ICCOA projection: surfaceDestroyed")
+                    // If the activity is only stopped (Home / rotation / system) the SDK
+                    // must stop decoding into this BufferQueue; surfaceCreated will
+                    // re-bind a fresh Surface and start the decoder again.
+                    bridge.onSurfaceDestroyed()
                 }
             }
         )
@@ -92,6 +96,16 @@ class IcocaProjectionActivity : AppCompatActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) hideSystemUi()
+    }
+
+    /**
+     * Back used to finish the projection screen while the SDK kept decoding into the
+     * destroyed BufferQueue, turning the cast permanently black. Keep the projection
+     * alive; the explicit "断开连接" button is the way out.
+     */
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        AppLog.i("ICCOA projection: back ignored to keep the cast alive")
     }
 
     @Suppress("DEPRECATION")

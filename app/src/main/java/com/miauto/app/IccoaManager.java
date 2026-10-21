@@ -144,9 +144,31 @@ public class IccoaManager {
 
     /** Surface 就绪 / 变化（Activity 的 surfaceChanged 回调里调用）。 */
     public void setSurface(Surface s) {
-        this.surface = s;
+        Surface previous = surface;
+        surface = s;
         castRetry = 0;          // 新 Surface 到位，重试预算重置
+        if (s != null && s != previous && castStarted) {
+            // A decoder keeps writing into the BufferQueue it was configured with.
+            // Reusing it with a new Surface leaves the picture black; pause first so
+            // startCast() can bind the new Surface.
+            log("Surface replaced — restarting decoder for the new Surface");
+            pauseCastInternal();
+        }
         tryStartCast();
+    }
+
+    /** Surface 被销毁（投影页退到后台 / 旋转 / 被系统回收）。 */
+    public void onSurfaceDestroyed() {
+        surface = null;
+        castRetry = 0;
+        pauseCastInternal();
+    }
+
+    private void pauseCastInternal() {
+        if (adapter != null && castStarted) {
+            try { adapter.pauseCast(); } catch (Throwable t) { log("pauseCast(换 Surface) 异常: " + t); }
+        }
+        castStarted = false;
     }
 
     // ==================================================================
