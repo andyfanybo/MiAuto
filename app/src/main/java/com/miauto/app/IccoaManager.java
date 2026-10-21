@@ -437,7 +437,10 @@ public class IccoaManager {
         }
         android.util.DisplayMetrics dm = appCtx.getResources().getDisplayMetrics();
         int densityDpi = dm.densityDpi;
-        int dpi = clamp(320, 120, 640);
+        // The phone lays its virtual display out at this density. A car panel is
+        // usually 160 dpi (1280x800); the old hardcoded 320 made CarWith render a
+        // 640x400 dp surface and doubled the UI on this head unit.
+        int dpi = clamp(densityDpi, 120, 640);
         int realDpi = clamp(densityDpi, 120, 640);
         int fps = clamp(60, 15, 60);
         int sw = Math.max(1, screenW), sh = Math.max(1, screenH);
