@@ -11,10 +11,14 @@ For armeabi-v7a only, CMake now builds our own small `libovmsink.so` JNI bridge
 when no vendor library is supplied. It forwards the existing SDK native ABI to
 an application-owned RTSP/RTP receiver. Other ABIs keep existing behavior.
 The receiver implements WFD OPTIONS / GET_PARAMETER / SET_PARAMETER / SETUP /
-PLAY / PAUSE / TEARDOWN, paired RTP/RTCP ports and unencrypted RTP/MP2T AVC/AAC
-PES delivery into the SDK's existing MediaCodec paths. It advertises 720p30 AVC
-and AAC-LC 48kHz stereo, without HEVC, HDCP or raw AV packets. UIBC forwarding is supported
-when the peer negotiates an unencrypted generic input TCP port.
+PLAY / PAUSE / TEARDOWN. Its primary media mode mirrors the vendor arm64 sink:
+`RTP/AVP/TCP` + `wfd_av_raw_packet: true`, with the source opening a TCP
+connection to the advertised `client_port` and sending RFC 4571 length-prefixed
+RTP. Raw H.264 (single NAL / STAP-A / FU-A) is reassembled into Annex-B access
+units and raw AAC (RFC 3640) is wrapped in ADTS before it reaches the SDK's
+existing MediaCodec paths. The earlier UDP + MPEG-TS implementation remains as a
+fallback (`raw=false`), including its paired RTSP RTP/RTCP ports. UIBC forwarding
+is supported when the peer negotiates an unencrypted generic input TCP port.
 
 This is an independent compatibility implementation, not a rebuilt vendor SDK.
 No vendor implementation code or proprietary SDK dex is copied into the repo.
@@ -88,3 +92,33 @@ CAST_CONNECTED (4) now establish UI connection state, and only initialized video
 (4) permits starting the decoder. Teardown/navigation events preserve other
 state without establishing video readiness. A regression check covers the
 teardown event and distinguishes link connection from initialized video.
+
+
+## Vendor-parity TCP/raw path
+
+A working reference session was captured from the upstream v0.1.1 APK (arm64
+`libovmsink.so`) with the same Xiaomi 15 Ultra. That session does **not** use
+MPEG-TS over UDP:
+
+```
+wfd_video_formats: 28 00 01 01 ffffffff ffffffff ffffffff 00 0000 0000 00 none none
+wfd_audio_codecs: AAC 0000000F 00
+wfd_client_rtp_ports: RTP/AVP/TCP;unicast 19000 0 mode=play
+wfd_av_raw_packet: true
+wfd_car_display_mode: mode=0;display=2700:1224;dpi=320;fps=60
+Transport: RTP/AVP/TCP;unicast;client_port=15550
+```
+
+After PLAY the source opened a second TCP connection to the sink's `client_port`
+and the first H.264 access unit arrived about 100 ms later; the sink reported
+`onNativeCastVideoInitialized ... video/avc 1920x868`.
+
+The armv7 branch previously forced `setSupportAvRawPacket(false)`, advertised
+UDP/MP2T and restricted the video mask to 720p30. CarWith completed the whole
+RTSP handshake in that mode but reset the RTSP and ICCOA media/control channels
+0.1-0.2 s after PLAY without sending any RTP. The armv7 receiver now uses the
+same transport, payload format and capability set as the known-working arm64
+sink, and takes the display mode from the SDK's `startWfdServer` arguments
+instead of hardcoding 1280x720@30. This is a protocol-parity fix based on the
+reference session; real-device projection still has to be confirmed with the
+same phone.

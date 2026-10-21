@@ -10,15 +10,14 @@ public final class CompatWfdSink {
     private CompatWfdSink() { }
     public static synchronized boolean start(String host, int port, int width, int height,
             int dpi, int fps, boolean hevc, boolean fusion, boolean rawPackets) {
-        log("Start: hevc=" + hevc + ", fusion=" + fusion + ", rawCapability=" + rawPackets);
+        log("Start: hevc=" + hevc + ", fusion=" + fusion + ", raw=" + rawPackets
+                + ", display=" + width + "x" + height + "@" + fps + ", dpi=" + dpi);
         if (hevc || fusion) { log("Unsupported mode; this compatibility backend supports plain AVC only"); return false; }
-        // This argument advertises an optional SDK capability, not a required
-        // packet format. Our RTSP capabilities explicitly negotiate MP2T/AVC.
-        if (rawPackets) log("Declining optional raw AV packets; negotiating MPEG-TS AVC");
         stop(null);
         try {
             final RtspWfdSession[] owner = new RtspWfdSession[1];
-            RtspWfdSession next = new RtspWfdSession(host, port, new RtspWfdSession.Listener() {
+            RtspWfdSession next = new RtspWfdSession(host, port, width, height, dpi, fps, rawPackets,
+                    new RtspWfdSession.Listener() {
                 private int width, height;
                 private boolean videoAnnounced;
                 public void ready(String id, int w, int h) {

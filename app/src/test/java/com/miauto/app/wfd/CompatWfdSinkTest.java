@@ -37,7 +37,7 @@ public class CompatWfdSinkTest {
                 }catch(Exception e){throw new RuntimeException(e);}
             });
             try {
-                assertTrue(CompatWfdSink.start("127.0.0.1",source.getLocalPort(),1280,720,160,30,false,false,true));
+                assertTrue(CompatWfdSink.start("127.0.0.1",source.getLocalPort(),1280,720,160,30,false,false,false));
                 peer.get(8,TimeUnit.SECONDS);
                 assertTrue(SinkNative.events.indexOf("video-format")<SinkNative.events.indexOf("video-frame"));
                 assertTrue(SinkNative.events.indexOf("audio-format")<SinkNative.events.indexOf("audio-frame"));
