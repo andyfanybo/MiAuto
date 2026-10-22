@@ -18,6 +18,11 @@ import com.ucar.vehiclesdk.UCarConfig;
 
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * MiAuto 车机端 ICCOA CarLink（小米 CarWith）SDK 生命周期管理器。
@@ -52,6 +57,22 @@ public class IccoaManager {
     private UCarAdapter adapter = null;
     private Surface surface = null;
 
+    /**
+     * UIBC touch writes are blocking socket I/O inside the SDK. Sending them on
+     * the main thread throws NetworkOnMainThreadException and drops the event, so
+     * a single ordered worker owns the socket; the queue is bounded and drops the
+     * oldest move when the phone cannot keep up.
+     */
+    private final ExecutorService touchExecutor = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<Runnable>(128),
+            runnable -> {
+                Thread thread = new Thread(runnable, "MiAuto-UIBC");
+                thread.setDaemon(true);
+                return thread;
+            },
+            new ThreadPoolExecutor.DiscardOldestPolicy());
+
     /** {@link #tryStartCast()} 的重试预算（×500ms = 最长 10 秒）。 */
     private static final int CAST_RETRY_MAX = 20;
     private int castRetry = 0;
@@ -76,6 +97,7 @@ public class IccoaManager {
 
     /** 会话是否正在进行（手机连接中或已连接）。由连接回调维护，看门狗据此避让。 */
     private volatile boolean sessionActive = false;
+    private volatile boolean videoReady = false;
 
     /**
      * 会话结束后的重新广播。
@@ -141,11 +163,68 @@ public class IccoaManager {
 
     public String getLastPinCode() { return lastPinCode; }
 
+    public int getDisplayWidth() { return videoW; }
+
+    public int getDisplayHeight() { return videoH; }
+
+    /**
+     * Forwards one Android MotionEvent to the phone's UIBC server.
+     *
+     * <p>The SDK expects the raw {@code MotionEvent.getAction()} value, one entry
+     * per pointer, and coordinates in the display space declared by
+     * {@code startCast(surface, width, height)}. It maps them to the stream's
+     * source size and writes the UIBC payload through {@code SinkNative.onUibcEvent}.
+     */
+    public boolean sendTouchEvent(int action, int count, int[] trackIds, int[] xs, int[] ys) {
+        if (adapter == null || !videoReady || count <= 0
+                || trackIds == null || xs == null || ys == null
+                || trackIds.length != count || xs.length != count || ys.length != count) {
+            return false;
+        }
+        final UCarAdapter sink = adapter;
+        try {
+            touchExecutor.execute(() -> {
+                try {
+                    if (!sink.sendTouchEvent(action, count, trackIds, xs, ys)) {
+                        log("sendTouchEvent 未发送（SDK 返回 false）");
+                    }
+                } catch (Throwable t) {
+                    log("sendTouchEvent 后台异常: " + t);
+                }
+            });
+            return true;
+        } catch (RejectedExecutionException error) {
+            return false;
+        }
+    }
+
     /** Surface 就绪 / 变化（Activity 的 surfaceChanged 回调里调用）。 */
     public void setSurface(Surface s) {
-        this.surface = s;
+        Surface previous = surface;
+        surface = s;
         castRetry = 0;          // 新 Surface 到位，重试预算重置
+        if (s != null && s != previous && castStarted) {
+            // A decoder keeps writing into the BufferQueue it was configured with.
+            // Reusing it with a new Surface leaves the picture black; pause first so
+            // startCast() can bind the new Surface.
+            log("Surface replaced — restarting decoder for the new Surface");
+            pauseCastInternal();
+        }
         tryStartCast();
+    }
+
+    /** Surface 被销毁（投影页退到后台 / 旋转 / 被系统回收）。 */
+    public void onSurfaceDestroyed() {
+        surface = null;
+        castRetry = 0;
+        pauseCastInternal();
+    }
+
+    private void pauseCastInternal() {
+        if (adapter != null && castStarted) {
+            try { adapter.pauseCast(); } catch (Throwable t) { log("pauseCast(换 Surface) 异常: " + t); }
+        }
+        castStarted = false;
     }
 
     // ==================================================================
@@ -215,6 +294,8 @@ public class IccoaManager {
         }
         try { adapter.stopAdvertise(); } catch (Throwable t) { log("stopAdvertise(重播前) 异常: " + t); }
         sdkReady = true;
+        sessionActive = false;
+        videoReady = false;
         castStarted = false;
         castRetry = 0;
         lastPinCode = null;
@@ -250,6 +331,7 @@ public class IccoaManager {
         main.removeCallbacks(reAdvertiseRunnable);
         cancelAutoRefresh();
         sessionActive = false;
+        videoReady = false;
         castStarted = false;
         sdkReady = false;
         lastPinCode = null;
@@ -269,6 +351,7 @@ public class IccoaManager {
             try { adapter.disconnect(); } catch (Throwable t) { log("disconnect 异常: " + t); }
         }
         sessionActive = false;
+        videoReady = false;
         castStarted = false;
         lastPinCode = null;
         scheduleReAdvertise();
@@ -294,7 +377,7 @@ public class IccoaManager {
      * 这里的十秒预算只用于「Surface 已设但尚未 valid」的短暂窗口。
      */
     private void tryStartCast() {
-        if (!sdkReady || castStarted || adapter == null) return;
+        if (!sdkReady || !videoReady || castStarted || adapter == null) return;
         Surface s = surface;
         if (s == null || !s.isValid()) {
             if (castRetry < CAST_RETRY_MAX) {
@@ -333,16 +416,25 @@ public class IccoaManager {
             log("onConnectStateChanged state=" + stateName(state) + " parameter=" + parameter);
             if (IccoaConnectionPolicy.isTerminalState(state)) {
                 sessionActive = false;
+                videoReady = false;
                 lastPinCode = null;
                 castStarted = false;
                 scheduleReAdvertise();
                 scheduleAutoRefresh();
             } else if (IccoaConnectionPolicy.isConnectedState(state)) {
                 sessionActive = true;
+                // Sticky: the SDK sends CAST_CONNECTED (4) *before* CONNECTED (2),
+                // so a later CONNECTED event must not discard the video readiness
+                // that the Surface needs to call startCast().
+                videoReady = IccoaConnectionPolicy.videoReadyAfter(videoReady, state);
                 main.removeCallbacks(reAdvertiseRunnable);
                 cancelAutoRefresh();
+            } else if (state == IccoaConnectionPolicy.CAST_DISCONNECTED) {
+                videoReady = false;
+                castStarted = false;
             }
             main.post(() -> listener.onConnectionState(state));
+            if (videoReady) main.post(IccoaManager.this::tryStartCast);
         }
 
         @Override
@@ -426,7 +518,10 @@ public class IccoaManager {
         }
         android.util.DisplayMetrics dm = appCtx.getResources().getDisplayMetrics();
         int densityDpi = dm.densityDpi;
-        int dpi = clamp(320, 120, 640);
+        // The phone lays its virtual display out at this density. A car panel is
+        // usually 160 dpi (1280x800); the old hardcoded 320 made CarWith render a
+        // 640x400 dp surface and doubled the UI on this head unit.
+        int dpi = clamp(densityDpi, 120, 640);
         int realDpi = clamp(densityDpi, 120, 640);
         int fps = clamp(60, 15, 60);
         int sw = Math.max(1, screenW), sh = Math.max(1, screenH);
@@ -443,6 +538,10 @@ public class IccoaManager {
         boolean softAp = CarLinkTransport.supportsAp(transport, android.os.Build.VERSION.SDK_INT);
         log("wireless transports: mode=" + transport + " P2P=" + p2p + " SoftAP=" + softAp +
                 " api=" + android.os.Build.VERSION.SDK_INT);
+        // ARMv7 uses our own RTP receiver, but it implements the same transport the
+        // vendor arm64 sink uses: RTP/AVP/TCP with raw H.264 access units. Declaring
+        // raw=false made CarWith negotiate MPEG-TS/UDP and then abort right after PLAY.
+        log("WFD transport: raw AV packets=true, media=RTP/AVP/TCP");
         return new UCarConfig.Builder()
                 .setCarBrMac(carId)                  // 必须恰好 6 字节
                 .setDpi(dpi)                         // 120..640
@@ -456,6 +555,7 @@ public class IccoaManager {
                 .setSupportSoftAP(softAp)
                 .setSupportCamera(false)
                 .setSupportHevc(false)
+                .setSupportAvRawPacket(true)
                 .setSupportMic(true)
                 .setUseCustomAudioRecord(false)
                 .setSupportStereoRecord(false)

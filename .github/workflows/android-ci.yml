@@ -78,6 +78,12 @@ jobs:
       - name: Test ICCOA USB JNI contract
         run: bash scripts/test_usbio.sh
 
+      - name: Test ARMv7 WFD JNI contract
+        run: bash scripts/test_ovmsink.sh
+
+      - name: Test SDK generated-resource relocation
+        run: python3 -m unittest discover -s tests -p test_rebind_iccoa_resources.py
+
       - name: Assemble github debug and release
         run: ./gradlew :app:assembleGithubDebug :app:assembleGithubRelease --stacktrace
 

@@ -16,6 +16,13 @@ import java.util.Set;
 /** SDK-compatible hotspot transport backed exclusively by LocalOnlyHotspot. */
 public class PublicHotspotService extends Service {
     private static final String TAG = "MiAuto/PublicHotspot";
+    /**
+     * A failed CarWith attempt makes the SDK close the AP service. Starting a fresh
+     * LocalOnlyHotspot each time changes the SSID/password, so the phone's stale
+     * Wi-Fi profile fails again. Keep the reservation and reuse its credentials for
+     * a while; a new create() re-announces the same network instead of regenerating it.
+     */
+    private static final long RETAIN_MS = 10 * 60 * 1000L;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Handler platformCallbacks = new Handler(Looper.getMainLooper());
     private final Handler probeCleanup = new Handler(Looper.getMainLooper());
@@ -25,9 +32,22 @@ public class PublicHotspotService extends Service {
     private long announced = -1;
     private boolean probing;
     private WifiManager wifi;
+    private final Runnable releaseRetained = () -> stopHotspot();
+    private String lastSsid, lastPassword, lastAddress, lastMac;
+    private int lastFrequency;
     private final SdkWifiApBinder binder = new SdkWifiApBinder(new SdkWifiApBinder.Commands() {
         @Override public void open() { main.post(() -> { userClose = false; binder.notifyEvent(1); }); }
-        @Override public void close() { main.post(() -> stopHotspot()); }
+        @Override public void close() {
+            main.post(() -> {
+                if (session != null && session.isActive(session.generation()) && lastAddress != null) {
+                    main.removeCallbacks(releaseRetained);
+                    main.postDelayed(releaseRetained, RETAIN_MS);
+                    Log.i(TAG, "LocalOnlyHotspot retained for the next attempt");
+                } else {
+                    stopHotspot();
+                }
+            });
+        }
         @Override public void create(int channel, String ssid, String password, boolean coexist, boolean prefix) {
             // Public LOHS generates its own credentials and chooses the radio band.
             main.post(() -> {
@@ -96,7 +116,25 @@ public class PublicHotspotService extends Service {
     }
 
     private void startHotspot() {
-        if (session.isActive(session.generation())) return;
+        if (session.isActive(session.generation())) {
+            main.removeCallbacks(releaseRetained);
+            if (!probing && lastAddress != null) {
+                Log.i(TAG, "Reusing retained LocalOnlyHotspot, address=" + lastAddress
+                        + ", same generated credentials");
+                binder.created(lastAddress, lastSsid, lastPassword, lastMac, lastFrequency);
+                binder.notifyEvent(5);
+            }
+            return;
+        }
+        // Keep the station (FZ5) connected. MTK STA+SAP follows it; with no
+        // station at all (out-of-house reboot) the hotspot falls back to the
+        // 2.4GHz default, which needs no country code.
+        if (wifi != null && !wifi.isWifiEnabled()) {
+            Log.i(TAG, "Wi-Fi is off; enabling it for the local hotspot");
+            wifi.setWifiEnabled(true);
+            main.postDelayed(this::startHotspot, 2500);
+            return;
+        }
         before = HotspotNetworkInfo.addresses();
         userClose = false;
         announced = -1;
@@ -123,6 +161,11 @@ public class PublicHotspotService extends Service {
         } catch (RuntimeException error) {
             Log.w(TAG, "Station frequency unavailable", error);
         }
+        lastAddress = network.address;
+        lastSsid = ssid;
+        lastPassword = password;
+        lastMac = network.mac;
+        lastFrequency = frequency;
         Log.i(TAG, "LocalOnlyHotspot ready, address=" + network.address + ", frequency=" + frequency
                 + ", generated credentials available");
         // SDK v1.5.3 order is IP, SSID, password, MAC, frequency. Empty MAC and
@@ -139,8 +182,14 @@ public class PublicHotspotService extends Service {
         userClose = false;
         probing = false;
         main.removeCallbacksAndMessages(null);
+        main.removeCallbacks(releaseRetained);
         if (session != null) session.stop();
         announced = -1;
+        lastAddress = null;
+        lastSsid = null;
+        lastPassword = null;
+        lastMac = null;
+        lastFrequency = 0;
         Log.i(TAG, "LocalOnlyHotspot reservation released");
     }
 

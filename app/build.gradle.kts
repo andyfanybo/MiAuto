@@ -9,6 +9,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import java.io.FileOutputStream
 import java.io.BufferedOutputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 
 plugins {
@@ -340,7 +341,7 @@ dependencies {
 //   所以打包完成后把 SDK dex 作为下一个 classesN.dex 追加进 APK，再 zipalign + 重签。
 //   debug 变体沿用默认 debug keystore；release 变体用 key.properties 里的发布密钥
 //   （改 zip 会作废 AGP 的签名，所以两者都必须重签）。
-//   纯 java.util.zip 实现，不依赖外部脚本。
+//   ZIP 操作使用 java.util.zip；Python 工具重定位 SDK 生成的图标资源常量。
 // =====================================================================
 val sdkDex = file("libs/icar-sdk.dex")
 val sdkDexBytes: ByteArray = if (sdkDex.exists()) sdkDex.readBytes() else ByteArray(0)
@@ -391,6 +392,37 @@ val injectIccoaDex = tasks.register("injectIccoaDex") {
             val tmpInjected = File(apk.parentFile, "$base-injected.apk")
             val tmpAligned = File(apk.parentFile, "$base-aligned.apk")
 
+            // The donor SDK's generated R.drawable.ucar ID belongs to its old
+            // APK. Rebind only that constant to our existing bitmap resource;
+            // BitmapFactory cannot decode the adaptive launcher XML as a bitmap.
+            val flavorName = apk.parentFile.parentFile.name
+            val variantName = flavorName + apk.parentFile.name.replaceFirstChar { it.uppercaseChar() }
+            val symbolRoot = layout.buildDirectory.dir("intermediates/runtime_symbol_list/$variantName").get().asFile
+            val symbols = symbolRoot.takeIf { it.exists() }?.walkTopDown()
+                ?.firstOrNull { it.isFile && it.name == "R.txt" }
+            require(symbols != null) { "Missing runtime resource symbols for $variantName" }
+            val relocatedSdk = File(temporaryDir, "$base-resource-bound-sdk.dex")
+            val relocationLog = ByteArrayOutputStream()
+            exec {
+                commandLine("python3", rootProject.file("scripts/rebind_iccoa_resources.py").absolutePath,
+                    sdkDex.absolutePath, relocatedSdk.absolutePath, "--symbols", symbols.absolutePath)
+                standardOutput = relocationLog
+            }
+            logger.lifecycle(relocationLog.toString().trim())
+            val resourceValueOffset = Regex("field_offset=(\\d+)").find(relocationLog.toString())
+                ?.groupValues?.get(1)?.toInt() ?: error("Missing SDK resource relocation metadata")
+            val sdkBytesForApk = relocatedSdk.readBytes()
+            fun isSdkCopy(candidate: ByteArray): Boolean {
+                if (candidate.size != sdkDexBytes.size) return false
+                for (i in candidate.indices) {
+                    // Rebuilds can change resource IDs and hence DEX checksums.
+                    // Every other byte must match the user's original SDK.
+                    if (i !in 8 until 32 && i !in resourceValueOffset until resourceValueOffset + 4 &&
+                        candidate[i] != sdkDexBytes[i]) return false
+                }
+                return true
+            }
+
             // --- 1. 追加 classesN.dex（保留原压缩方式 + 剥离 META-INF 签名）---
             val zin = ZipFile(apk)
             val entries = zin.entries().toList()
@@ -401,7 +433,7 @@ val injectIccoaDex = tasks.register("injectIccoaDex") {
             val staleCopies = entries.filter { e ->
                 e.name.matches(Regex("classes\\d+\\.dex")) &&
                     e.size == sdkDexBytes.size.toLong() &&
-                    zin.getInputStream(e).readBytes().contentEquals(sdkDexBytes)
+                    isSdkCopy(zin.getInputStream(e).readBytes())
             }.map { it.name }.toSet()
             if (staleCopies.isNotEmpty()) {
                 logger.lifecycle(">>> [${apk.name}] 移除历史注入副本: ${staleCopies.joinToString(", ")}")
@@ -432,7 +464,7 @@ val injectIccoaDex = tasks.register("injectIccoaDex") {
                 val de = ZipEntry(newName)
                 de.method = ZipEntry.DEFLATED
                 zout.putNextEntry(de)
-                zout.write(sdkDexBytes)
+                zout.write(sdkBytesForApk)
                 zout.closeEntry()
                 zout.close()
             }

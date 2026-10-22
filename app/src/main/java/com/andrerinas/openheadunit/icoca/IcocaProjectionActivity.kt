@@ -40,7 +40,30 @@ class IcocaProjectionActivity : AppCompatActivity() {
         hideSystemUi()
 
         val bridge = App.provide(this).icocaBridge
-        findViewById<SurfaceView>(R.id.icoca_surface).holder.addCallback(
+        val surfaceView = findViewById<SurfaceView>(R.id.icoca_surface)
+        // Forward every touch on the mirrored picture to the phone's UIBC server.
+        // The SDK wants display-space pixels and the raw MotionEvent action.
+        surfaceView.setOnTouchListener { view, event ->
+            val viewWidth = view.width
+            val viewHeight = view.height
+            if (viewWidth <= 0 || viewHeight <= 0) return@setOnTouchListener false
+            val displayWidth = bridge.displayWidth.coerceAtLeast(1)
+            val displayHeight = bridge.displayHeight.coerceAtLeast(1)
+            val count = event.pointerCount
+            val ids = IntArray(count)
+            val xs = IntArray(count)
+            val ys = IntArray(count)
+            for (i in 0 until count) {
+                ids[i] = event.getPointerId(i)
+                xs[i] = (event.getX(i) * displayWidth / viewWidth).toInt()
+                    .coerceIn(0, displayWidth - 1)
+                ys[i] = (event.getY(i) * displayHeight / viewHeight).toInt()
+                    .coerceIn(0, displayHeight - 1)
+            }
+            bridge.sendTouch(event.action, count, ids, xs, ys)
+            true
+        }
+        surfaceView.holder.addCallback(
             object : SurfaceHolder.Callback {
                 override fun surfaceCreated(holder: SurfaceHolder) {
                     AppLog.i("ICCOA projection: surfaceCreated")
@@ -56,6 +79,10 @@ class IcocaProjectionActivity : AppCompatActivity() {
 
                 override fun surfaceDestroyed(holder: SurfaceHolder) {
                     AppLog.i("ICCOA projection: surfaceDestroyed")
+                    // If the activity is only stopped (Home / rotation / system) the SDK
+                    // must stop decoding into this BufferQueue; surfaceCreated will
+                    // re-bind a fresh Surface and start the decoder again.
+                    bridge.onSurfaceDestroyed()
                 }
             }
         )
@@ -92,6 +119,16 @@ class IcocaProjectionActivity : AppCompatActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) hideSystemUi()
+    }
+
+    /**
+     * Back used to finish the projection screen while the SDK kept decoding into the
+     * destroyed BufferQueue, turning the cast permanently black. Keep the projection
+     * alive; the explicit "断开连接" button is the way out.
+     */
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        AppLog.i("ICCOA projection: back ignored to keep the cast alive")
     }
 
     @Suppress("DEPRECATION")

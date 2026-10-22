@@ -85,3 +85,11 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${ANDROID_ABI}/libusbio.so
     add_library(usbio SHARED usbio_compat.c)
     target_compile_options(usbio PRIVATE -Wall -Wextra -Werror)
 endif()
+
+# The vendor WFD sink is arm64-only. Our ARMv7 AVC transport uses the SDK's
+# callback ABI and its existing Android MediaCodec decoder; no FFmpeg is needed.
+if(ANDROID_ABI STREQUAL "armeabi-v7a" AND
+   NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${ANDROID_ABI}/libovmsink.so")
+    add_library(ovmsink SHARED ovmsink_compat.c)
+    target_compile_options(ovmsink PRIVATE -Wall -Wextra -Werror)
+endif()

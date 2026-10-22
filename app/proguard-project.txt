@@ -77,3 +77,4 @@
 -keep class androidx.room.** { *; }
 -keep class androidx.room.util.** { *; }
 -keep class androidx.sqlite.db.** { *; }
+-keep class com.miauto.app.wfd.CompatWfdSink { *; }
