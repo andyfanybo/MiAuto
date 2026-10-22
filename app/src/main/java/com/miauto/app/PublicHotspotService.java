@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.app.Service;
 import android.content.Intent;
 import android.net.wifi.WifiConfiguration;
+import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Handler;
 import android.os.IBinder;
@@ -35,6 +36,8 @@ public class PublicHotspotService extends Service {
     private final Runnable releaseRetained = () -> stopHotspot();
     private String lastSsid, lastPassword, lastAddress, lastMac;
     private int lastFrequency;
+    private int staNetworkId = -1;
+    private boolean staDisabled;
     private final SdkWifiApBinder binder = new SdkWifiApBinder(new SdkWifiApBinder.Commands() {
         @Override public void open() { main.post(() -> { userClose = false; binder.notifyEvent(1); }); }
         @Override public void close() {
@@ -126,6 +129,23 @@ public class PublicHotspotService extends Service {
             }
             return;
         }
+        if (wifi != null) {
+            if (!wifi.isWifiEnabled()) {
+                Log.i(TAG, "Wi-Fi is off; enabling it for the local hotspot");
+                wifi.setWifiEnabled(true);
+                main.postDelayed(this::startHotspot, 2500);
+                return;
+            }
+            WifiInfo station = wifi.getConnectionInfo();
+            if (station != null && station.getNetworkId() >= 0 && !staDisabled) {
+                staNetworkId = station.getNetworkId();
+                boolean disabled = wifi.disableNetwork(staNetworkId);
+                wifi.disconnect();
+                staDisabled = true;
+                Log.i(TAG, "STA network " + staNetworkId + " disabled (" + disabled
+                        + ") so the local hotspot uses the 2.4GHz default");
+            }
+        }
         before = HotspotNetworkInfo.addresses();
         userClose = false;
         announced = -1;
@@ -174,6 +194,13 @@ public class PublicHotspotService extends Service {
         probing = false;
         main.removeCallbacksAndMessages(null);
         main.removeCallbacks(releaseRetained);
+        if (staDisabled && wifi != null && staNetworkId >= 0) {
+            wifi.enableNetwork(staNetworkId, true);
+            wifi.reconnect();
+            Log.i(TAG, "STA network " + staNetworkId + " re-enabled");
+        }
+        staDisabled = false;
+        staNetworkId = -1;
         if (session != null) session.stop();
         announced = -1;
         lastAddress = null;
