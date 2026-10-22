@@ -144,6 +144,10 @@ public class PublicHotspotService extends Service {
                 staDisabled = true;
                 Log.i(TAG, "STA network " + staNetworkId + " disabled (" + disabled
                         + ") so the local hotspot uses the 2.4GHz default");
+                // Give the supplicant time to leave the 5 GHz channel before the
+                // SoftAP starts; otherwise STA+SAP can still pick the station channel.
+                main.postDelayed(this::startHotspot, 1500);
+                return;
             }
         }
         before = HotspotNetworkInfo.addresses();
